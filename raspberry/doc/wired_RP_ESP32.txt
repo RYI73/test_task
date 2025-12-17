@@ -1,0 +1,8 @@
+| ESP32-CAM (HSPI) | Raspberry Pi |
+| ---------------- | ------------ |
+| MOSI 13          | MISO 21      |
+| MISO 12          | MOSI 19      |
+| SCLK 14          | SCLK 23      |
+| CS   15          | CE0 24       |
+| GND              | GND 6        |
+| 3.3V             | 3.3V 1       |
