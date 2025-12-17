@@ -8,21 +8,42 @@
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/select.h>
 #include <linux/spi/spidev.h>
-#include <linux/if_tun.h>
 #include <arpa/inet.h>
-
-// Required for TUN/TAP interface
+#include <linux/if.h>
 #include <linux/if_tun.h>
-#include <net/if.h>        // <- for struct ifreq and IFNAMSIZ
-#include <linux/spi/spidev.h>
 
 #define SPI_DEVICE "/dev/spidev0.0"
 #define SPI_MODE 0
 #define SPI_BITS 8
-#define SPI_SPEED 1000000       /**< SPI speed in Hz */
-#define MAX_PKT_SIZE 1600       /**< Maximum packet size for SPI transfer */
+#define SPI_SPEED 1000000      // SPI speed in Hz
+#define MAX_PKT_SIZE 1500      // Maximum packet size for SPI transfer
+#define SPI_MAGIC              0x49504657
+
+typedef struct __attribute__((packed)) {
+    uint32_t magic;     /**< Magic constant SPI_MAGIC ('IPFW') */
+    uint8_t version;    /**< Protocol version (0x01) */
+    uint8_t flags;      /**< Reserved */
+    uint16_t length;    /**< IPv4 packet length in bytes */
+} spi_ip_hdr_t;
+
+/**
+ * @brief Compute CRC32 over a buffer
+ *
+ * @param crc Initial CRC value
+ * @param buf Pointer to buffer
+ * @param len Length of buffer in bytes
+ * @return Computed CRC32 value
+ */
+uint32_t crc32(uint32_t crc, const uint8_t *buf, size_t len) {
+    uint32_t c = crc ^ 0xFFFFFFFF;
+    for (size_t i = 0; i < len; i++) {
+        c ^= buf[i];
+        for (int k = 0; k < 8; k++)
+            c = c & 1 ? 0xEDB88320 ^ (c >> 1) : c >> 1;
+    }
+    return c ^ 0xFFFFFFFF;
+}
 
 /**
  * @brief Allocate a TUN interface
@@ -32,7 +53,7 @@
  */
 int tun_alloc(char *devname) {
     struct ifreq ifr;
-    int fd, err;
+    int fd;
 
     if ((fd = open("/dev/net/tun", O_RDWR)) < 0) {
         perror("tun open");
@@ -44,7 +65,7 @@ int tun_alloc(char *devname) {
     if (devname)
         strncpy(ifr.ifr_name, devname, IFNAMSIZ);
 
-    if ((err = ioctl(fd, TUNSETIFF, (void *)&ifr)) < 0) {
+    if (ioctl(fd, TUNSETIFF, (void *)&ifr) < 0) {
         perror("tun ioctl");
         close(fd);
         return -1;
@@ -56,8 +77,6 @@ int tun_alloc(char *devname) {
 
 /**
  * @brief Initialize SPI device
- *
- * Opens the SPI device and configures mode, bits per word, and speed.
  *
  * @param device SPI device path (e.g., "/dev/spidev0.0")
  * @return File descriptor of SPI device, or -1 on error
@@ -85,7 +104,7 @@ int spi_init(const char *device) {
 }
 
 /**
- * @brief Perform a full-duplex SPI transfer
+ * @brief Perform full-duplex SPI transfer
  *
  * @param spi_fd File descriptor of SPI device
  * @param tx_buf Pointer to transmit buffer
@@ -114,14 +133,12 @@ ssize_t spi_transfer(int spi_fd, uint8_t *tx_buf, uint8_t *rx_buf, size_t len) {
  * @brief Read a packet from TUN interface
  *
  * @param tun_fd File descriptor of TUN interface
- * @param buf Buffer to store the packet
+ * @param buf Buffer to store packet
  * @return Number of bytes read, or -1 on error
  */
 ssize_t read_tun_packet(int tun_fd, uint8_t *buf) {
     ssize_t n = read(tun_fd, buf, MAX_PKT_SIZE);
-    if (n < 0 && errno != EAGAIN) {
-        perror("read tun");
-    }
+    if (n < 0 && errno != EAGAIN) perror("read tun");
     return n;
 }
 
@@ -135,14 +152,12 @@ ssize_t read_tun_packet(int tun_fd, uint8_t *buf) {
  */
 ssize_t write_tun_packet(int tun_fd, uint8_t *buf, size_t len) {
     ssize_t n = write(tun_fd, buf, len);
-    if (n < 0) {
-        perror("write tun");
-    }
+    if (n < 0) perror("write tun");
     return n;
 }
 
 /**
- * @brief Send a packet to ESP32 via SPI with 2-byte length header
+ * @brief Send a packet to ESP32 via SPI (framed with magic + version + CRC32)
  *
  * @param spi_fd SPI device file descriptor
  * @param data Pointer to packet data
@@ -150,72 +165,82 @@ ssize_t write_tun_packet(int tun_fd, uint8_t *buf, size_t len) {
  * @return 0 on success, -1 on error
  */
 int spi_send_packet(int spi_fd, uint8_t *data, uint16_t len) {
-    if (len > MAX_PKT_SIZE) return -1;
+    if (len == 0 || len > MAX_PKT_SIZE) return -1;
 
-    uint8_t buf[MAX_PKT_SIZE + 2];
-    buf[0] = (len >> 8) & 0xFF;
-    buf[1] = len & 0xFF;
-    memcpy(&buf[2], data, len);
+    spi_ip_hdr_t hdr = {
+        .magic = htonl(SPI_MAGIC),
+        .version = 0x01,
+        .flags = 0,
+        .length = htons(len)
+    };
 
-    if (spi_transfer(spi_fd, buf, NULL, len + 2) < 0)
-        return -1;
+    uint32_t crc = htonl(crc32(0, data, len));
+
+    uint8_t buf[sizeof(hdr) + len + sizeof(crc)];
+    size_t offset = 0;
+    memcpy(buf + offset, &hdr, sizeof(hdr)); offset += sizeof(hdr);
+    memcpy(buf + offset, data, len); offset += len;
+    memcpy(buf + offset, &crc, sizeof(crc));
+
+    if (spi_transfer(spi_fd, buf, NULL, sizeof(buf)) < 0) return -1;
     return 0;
 }
 
 /**
- * @brief Receive a packet from ESP32 via SPI with 2-byte length header
+ * @brief Receive a packet from ESP32 via SPI (framed with magic + version + CRC32)
  *
  * @param spi_fd SPI device file descriptor
  * @param data Buffer to store received packet
- * @return Number of bytes received, or 0 if no packet, or -1 on error
+ * @return Number of bytes received, or -1 on error
  */
 int spi_receive_packet(int spi_fd, uint8_t *data) {
-    uint8_t header[2] = {0, 0};
-    if (spi_transfer(spi_fd, header, header, 2) < 0) return -1;
+    uint8_t buf[sizeof(spi_ip_hdr_t) + MAX_PKT_SIZE + sizeof(uint32_t)];
+    if (spi_transfer(spi_fd, NULL, buf, sizeof(buf)) < 0) return -1;
 
-    uint16_t pkt_len = (header[0] << 8) | header[1];
-    if (pkt_len == 0 || pkt_len > MAX_PKT_SIZE) return 0;
+    spi_ip_hdr_t *hdr = (spi_ip_hdr_t *)buf;
+    if (ntohl(hdr->magic) != SPI_MAGIC) return -1;
+    if (hdr->version != 0x01) return -1;
 
-    uint8_t dummy[MAX_PKT_SIZE] = {0};
-    if (spi_transfer(spi_fd, dummy, data, pkt_len) < 0) return -1;
+    uint16_t pkt_len = ntohs(hdr->length);
+    if (pkt_len == 0 || pkt_len > MAX_PKT_SIZE) return -1;
 
+    uint8_t *payload = buf + sizeof(spi_ip_hdr_t);
+    uint32_t recv_crc;
+    memcpy(&recv_crc, payload + pkt_len, sizeof(recv_crc));
+
+    if (ntohl(recv_crc) != crc32(0, payload, pkt_len)) return -1;
+
+    memcpy(data, payload, pkt_len);
     return pkt_len;
 }
 
 /**
- * @brief Main loop for TUN <-> SPI forwarding
+ * @brief Main loop for forwarding between TUN and SPI
  *
- * Reads packets from TUN and sends to SPI, and reads packets from SPI
- * and writes them to TUN.
- *
- * @param tun_fd TUN interface file descriptor
- * @param spi_fd SPI device file descriptor
+ * @param tun_fd File descriptor of TUN interface
+ * @param spi_fd File descriptor of SPI device
  */
 void forward_loop(int tun_fd, int spi_fd) {
     uint8_t tun_buf[MAX_PKT_SIZE];
     uint8_t spi_buf[MAX_PKT_SIZE];
 
     while (1) {
-        // --- TUN -> SPI ---
         ssize_t n = read_tun_packet(tun_fd, tun_buf);
-        if (n > 0) {
-            spi_send_packet(spi_fd, tun_buf, n);
-        }
+        if (n > 0) spi_send_packet(spi_fd, tun_buf, n);
 
-        // --- SPI -> TUN ---
         int rcv_len = spi_receive_packet(spi_fd, spi_buf);
-        if (rcv_len > 0) {
-            write_tun_packet(tun_fd, spi_buf, rcv_len);
-        }
+        if (rcv_len > 0) write_tun_packet(tun_fd, spi_buf, rcv_len);
 
-        usleep(1000); // small sleep to avoid busy-loop
+        usleep(1000);
     }
 }
 
 /**
  * @brief Main application entry point
  *
- * Initializes TUN and SPI devices, then starts forwarding loop.
+ * Initializes TUN and SPI devices and starts forwarding loop
+ *
+ * @return Exit code (0 on success, 1 on failure)
  */
 int main() {
     int tun_fd = tun_alloc("tun0");
