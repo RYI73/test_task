@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 3.12)
 
-project(server)
+project(client)
 
 include_directories(.)
 set(SOURCES
-  src/server.c
+  src/client.c
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES})
