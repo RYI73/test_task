@@ -1,0 +1,50 @@
+# IntelliJ
+*.iml
+.idea
+
+#VSCode
+.vscode
+
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+server
+*.exe
+*.out
+*.app
+
+#CMake
+build_arm
+build_x86
+external
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
