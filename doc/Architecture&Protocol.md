@@ -171,6 +171,11 @@ This design allows:
 
 ---
 
+##Functional architecture of L3 packet forwarding via SPI
+
+![](Design.drawio.png)
+
+
 ## Summary
 
 ESP32 forwards raw IPv4 packets between Wi-Fi and SPI using lwIP RAW PCB and a simple framed SPI protocol. The Raspberry Pi terminates the link using a TUN interface and handles all higher-level networking logic using the Linux kernel.
