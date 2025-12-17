@@ -5,6 +5,9 @@
 #VSCode
 .vscode
 
+#Config
+sdkconfig.old
+
 # Prerequisites
 *.d
 
@@ -41,6 +44,7 @@
 #CMake
 build_arm
 build_x86
+esp32_spi_router/build
 external
 
 # Byte-compiled / optimized / DLL files
