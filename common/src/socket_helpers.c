@@ -140,7 +140,7 @@ int socket_raw_create(int *ssock, char *if_name)
         log_msg(LOG_DEBUG, "Socket %d created", sock);
 
         struct ifreq ifr = {0};
-        strncpy(ifr.ifr_name, if_name, IFNAMSIZ);
+        strncpy(ifr.ifr_name, if_name, IFNAMSIZ - 1);
         ioctl(sock, SIOCGIFINDEX, &ifr);
         if (ioctl(sock, SIOCGIFINDEX, &ifr) < 0) {
             log_msg(LOG_ERR, "Error in obtaining the network interface index, errno = %d [%s]", errno, strerror(errno));
