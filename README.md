@@ -26,18 +26,10 @@ idf.py build
 cd ..
 ```
 
-Build desktop utility 'client':
+Build Raspberry Pi utilities 'proxy' 'client' and 'server':
 ```
-cd desktop
-./compile --x86
-cd ..
-```
-
-Build Raspberry Pi utilities 'proxy' and 'server':
-```
-cd raspberry
 ./compile --arm
-cd ..
+./compile --x86
 ```
 
 

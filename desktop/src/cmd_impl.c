@@ -142,6 +142,8 @@ void cmd_status_get(int cli_argc, const char **cli_argv)
 void cmd_send_string(int cli_argc, const char **cli_argv)
 {
     const char *direct = CLIENT_MESSAGE;
+    int sockfd = -1;
+    char recv_buf[RECV_BUF_SIZE];
 
     struct option_entry entries[] = {
         {"string", 's', "Enter string for sending", OPTION_FLAG_string, .string = &direct},
@@ -153,35 +155,31 @@ void cmd_send_string(int cli_argc, const char **cli_argv)
     }
     else {
 
+        do {
+            if (!isOk(socket_tcp_client_create(&sockfd, 0, 0, SERVER_ADDR, SERVER_PORT))) {
+                break;
+            }
+
+            /* Send message to server */
+            if (!isOk(socket_send_data(sockfd, (void*)direct, strlen(direct)))) {
+                log_msg(LOG_ERR, "❌ send failed");
+            }
+
+            /* Receive reply */
+            ssize_t received = sizeof(recv_buf);
+            if (!isOk(socket_read_data(sockfd, recv_buf, &received, SOCKET_READ_TIMEOUT_MS))) {
+                log_msg(LOG_ERR, "❌ recv failed");
+                break;
+            }
+
+            recv_buf[received] = '\0';
+
+            /* Print server response */
+            print_string("Server reply: %s\n", recv_buf);
+
+        }while(0);
     }
 
-    int sockfd = -1;
-    char recv_buf[RECV_BUF_SIZE];
-
-    do {
-        if (!isOk(socket_tcp_client_create(&sockfd, 0, 0, SERVER_ADDR, SERVER_PORT))) {
-            break;
-        }
-
-        /* Send message to server */
-        if (!isOk(socket_send_data(sockfd, (void*)direct, strlen(direct)))) {
-            log_msg(LOG_ERR, "❌ send failed");
-        }
-
-        /* Receive reply */
-        ssize_t received = sizeof(recv_buf);
-        if (!isOk(socket_read_data(sockfd, recv_buf, &received, SOCKET_READ_TIMEOUT_MS))) {
-            log_msg(LOG_ERR, "❌ recv failed");
-            break;
-        }
-
-        recv_buf[received] = '\0';
-
-        /* Print server response */
-        print_string("Server reply: %s\n", recv_buf);
-        break;
-
-    }while(0);
 
     socket_close(sockfd);
 }
