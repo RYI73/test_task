@@ -25,6 +25,7 @@ sdkconfig.old
 *.so
 *.dylib
 *.dll
+*.bkp
 
 # Fortran module files
 *.mod
