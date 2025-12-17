@@ -4,13 +4,13 @@ project(client)
 
 include_directories(include)
 set(SOURCES
-#  src/client.c
   src/cli.c
   src/cmd_impl.c
   src/helpers.c
   src/main.c
   src/simple_options.c
   src/logs.c
+  src/socket_helpers.c
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES})
