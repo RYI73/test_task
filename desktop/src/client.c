@@ -27,7 +27,7 @@
 #define SERVER_PORT 12345
 
 /** Message sent to server */
-#define CLIENT_MESSAGE "HELLO\n"
+#define CLIENT_MESSAGE "HELLO"
 
 /** Maximum size of receive buffer */
 #define RECV_BUF_SIZE 256

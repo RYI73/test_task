@@ -22,6 +22,7 @@
 #include "cmd.h"
 #include "defines.h"
 #include "helpers.h"
+#include "socket_helpers.h"
 #include "logs.h"
 #include "simple_options.h"
 //#include "threads.h"
@@ -155,47 +156,22 @@ void cmd_send_string(int cli_argc, const char **cli_argv)
     }
 
     int sockfd = -1;
-    struct sockaddr_in server_addr;
     char recv_buf[RECV_BUF_SIZE];
 
     do {
-        /* Create TCP socket */
-        sockfd = socket(AF_INET, SOCK_STREAM, 0);
-        if (sockfd < 0) {
-            log_msg(LOG_ERR, "socket failed: %s", strerror(errno));
-            break;
-        }
-
-        /* Prepare server address */
-        memset(&server_addr, 0, sizeof(server_addr));
-        server_addr.sin_family = AF_INET;
-        server_addr.sin_port   = htons(SERVER_PORT);
-
-        if (inet_pton(AF_INET, SERVER_ADDR, &server_addr.sin_addr) != 1) {
-            log_msg(LOG_ERR, "inet_pton failed for %s", SERVER_ADDR);
-            break;
-        }
-
-        /* Connect to server */
-        if (connect(sockfd, (struct sockaddr *)&server_addr,
-                    sizeof(server_addr)) < 0) {
-            log_msg(LOG_ERR, "connect failed: %s", strerror(errno));
+        if (!isOk(socket_tcp_client_create(&sockfd, 0, 0, SERVER_ADDR, SERVER_PORT))) {
             break;
         }
 
         /* Send message to server */
-        ssize_t sent = send(sockfd, direct,
-                            strlen(direct), 0);
-        if (sent < 0) {
-            log_msg(LOG_ERR, "send failed: %s", strerror(errno));
-            break;
+        if (!isOk(socket_send_data(sockfd, (void*)direct, strlen(direct)))) {
+            log_msg(LOG_ERR, "❌ send failed");
         }
 
         /* Receive reply */
-        ssize_t received = recv(sockfd, recv_buf,
-                                sizeof(recv_buf) - 1, 0);
-        if (received < 0) {
-            log_msg(LOG_ERR, "recv failed: %s", strerror(errno));
+        ssize_t received = sizeof(recv_buf);
+        if (!isOk(socket_read_data(sockfd, recv_buf, &received, SOCKET_READ_TIMEOUT_MS))) {
+            log_msg(LOG_ERR, "❌ recv failed");
             break;
         }
 
@@ -207,8 +183,6 @@ void cmd_send_string(int cli_argc, const char **cli_argv)
 
     }while(0);
 
-    if (sockfd >= 0) {
-        close(sockfd);
-    }
+    socket_close(sockfd);
 }
 /***********************************************************************************************/
