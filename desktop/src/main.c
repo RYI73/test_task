@@ -18,6 +18,7 @@
 
 #include "helpers.h"
 #include "logo.h"
+#include "logs.h"
 #include "cmd.h"
 #include "error_code.h"
 #include "threads.h"
@@ -27,6 +28,9 @@ static int init(void)
 {
     int result = RESULT_OK;
 
+    /* Initialize syslog */
+    openlog("poll_client", LOG_PID | LOG_CONS, LOG_DAEMON);
+
     set_raw_mode(1);
 
     return result;
@@ -35,6 +39,7 @@ static int init(void)
 static void deinit(void)
 {
     set_raw_mode(0);
+    closelog();
 }
 /***********************************************************************************************/
 int main(void)
@@ -46,6 +51,7 @@ int main(void)
     result = init();
     if (isOk(result)) {
         cmd_init("Client# ", posix_putch, print_logo, stdout);
+        log_msg(LOG_INFO, "Client started.");
 
         while (1) {
             char ch;
@@ -58,6 +64,7 @@ int main(void)
         }
     }
 
+    log_msg(LOG_INFO, "Client stopped.");
     deinit();
 
     if (isOk(result)) {

@@ -10,9 +10,17 @@
 #define PROC_PATH                               "/proc"
 #define DEV_NULL_PATH                           "/dev/null"
 /***********************************************************************************************/
-#define ARQ_ADDRESS                             "127.0.0.1"
-#define ARQ_SENDER_PORT                         (12000)
-#define ARQ_RECEIVER_PORT                       (12001)
-/***********************************************************************************************/
 #define MAX_DUMP_BUFFER_SIZE                    (128)
+/***********************************************************************************************/
+/** Server IPv4 address (string form) */
+#define SERVER_ADDR "127.0.0.1"
+
+/** Server TCP port */
+#define SERVER_PORT 12345
+
+/** Message sent to server */
+#define CLIENT_MESSAGE "HELLO"
+
+/** Maximum size of receive buffer */
+#define RECV_BUF_SIZE 256
 /***********************************************************************************************/

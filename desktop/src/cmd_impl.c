@@ -15,19 +15,28 @@
 #include <stdarg.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <errno.h>
+#include <unistd.h>
 
 #include "cli.h"
 #include "cmd.h"
-//#include "defines.h"
+#include "defines.h"
 #include "helpers.h"
+#include "logs.h"
 #include "simple_options.h"
 //#include "threads.h"
+
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 /***********************************************************************************************/
 static struct cli cli;
 /***********************************************************************************************/
 commands_t commands[] = {
-    {"status_get",      cmd_status_get,             "Get modem status."},
+    {"status_get",      cmd_status_get,             "Get client status."},
+    {"send_str",        cmd_send_string,            "Send string to server."},
     {"exit",            cmd_empty,                  "Exit from ark-modem (or press Ctrl-D)."}
 };
 /***********************************************************************************************/
@@ -87,6 +96,14 @@ void cmd_usage(void)
     }
 }
 /***********************************************************************************************/
+static int eprintf(const char *str, ...) {
+    va_list ap;
+    va_start(ap, str);
+    vfprintf(stderr, str, ap);
+    va_end(ap);
+    return 0;
+}
+/***********************************************************************************************/
 void parser(int cli_argc, char **cli_argv)
 {
     bool is_cmd_found = false;
@@ -119,5 +136,79 @@ void cmd_status_get(int cli_argc, const char **cli_argv)
     u8 is_connected = 0;
 
     print_string("%-.*s%s\n", STATUS_NAME_SIZE, client_mode, is_connected?"Connected":"Disconnected");
+}
+/***********************************************************************************************/
+void cmd_send_string(int cli_argc, const char **cli_argv)
+{
+    const char *direct = CLIENT_MESSAGE;
+
+    struct option_entry entries[] = {
+        {"string", 's', "Enter string for sending", OPTION_FLAG_string, .string = &direct},
+        {NULL, 0, NULL, 0, .boolean=false},
+    };
+    int extra_args = opt_parse(cli_argc, cli_argv, entries);
+    if (extra_args < 0) {
+        opt_parse_usage(eprintf, cli_argv[0], entries);
+    }
+    else {
+
+    }
+
+    int sockfd = -1;
+    struct sockaddr_in server_addr;
+    char recv_buf[RECV_BUF_SIZE];
+
+    do {
+        /* Create TCP socket */
+        sockfd = socket(AF_INET, SOCK_STREAM, 0);
+        if (sockfd < 0) {
+            log_msg(LOG_ERR, "socket failed: %s", strerror(errno));
+            break;
+        }
+
+        /* Prepare server address */
+        memset(&server_addr, 0, sizeof(server_addr));
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_port   = htons(SERVER_PORT);
+
+        if (inet_pton(AF_INET, SERVER_ADDR, &server_addr.sin_addr) != 1) {
+            log_msg(LOG_ERR, "inet_pton failed for %s", SERVER_ADDR);
+            break;
+        }
+
+        /* Connect to server */
+        if (connect(sockfd, (struct sockaddr *)&server_addr,
+                    sizeof(server_addr)) < 0) {
+            log_msg(LOG_ERR, "connect failed: %s", strerror(errno));
+            break;
+        }
+
+        /* Send message to server */
+        ssize_t sent = send(sockfd, direct,
+                            strlen(direct), 0);
+        if (sent < 0) {
+            log_msg(LOG_ERR, "send failed: %s", strerror(errno));
+            break;
+        }
+
+        /* Receive reply */
+        ssize_t received = recv(sockfd, recv_buf,
+                                sizeof(recv_buf) - 1, 0);
+        if (received < 0) {
+            log_msg(LOG_ERR, "recv failed: %s", strerror(errno));
+            break;
+        }
+
+        recv_buf[received] = '\0';
+
+        /* Print server response */
+        print_string("Server reply: %s\n", recv_buf);
+        break;
+
+    }while(0);
+
+    if (sockfd >= 0) {
+        close(sockfd);
+    }
 }
 /***********************************************************************************************/

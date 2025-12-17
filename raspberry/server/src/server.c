@@ -31,13 +31,13 @@
 #define POLL_TIMEOUT_MS  500
 
 /** Expected message from client */
-#define EXPECTED_STRING  "HELLO\n"
+#define EXPECTED_STRING  "HELLO"
 
 /** Reply sent on successful match */
-#define OK_REPLY         "OK\n"
+#define OK_REPLY         "OK"
 
 /** Reply sent on mismatch */
-#define ERR_REPLY        "ERROR\n"
+#define ERR_REPLY        "ERROR"
 
 /**
  * @brief Global flag controlling main loop execution.
@@ -197,6 +197,7 @@ int main(void)
 
                 buf[n] = '\0';
 
+                syslog(LOG_DEBUG, "Server received: '%s'", buf);
                 if (strcmp(buf, EXPECTED_STRING) == 0)
                     send(pfds[i].fd, OK_REPLY, strlen(OK_REPLY), 0);
                 else

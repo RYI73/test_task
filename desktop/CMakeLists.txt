@@ -10,6 +10,7 @@ set(SOURCES
   src/helpers.c
   src/main.c
   src/simple_options.c
+  src/logs.c
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES})
