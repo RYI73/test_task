@@ -25,7 +25,7 @@
 #include "socket_helpers.h"
 #include "logs.h"
 #include "simple_options.h"
-//#include "threads.h"
+#include "protocol.h"
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -143,7 +143,8 @@ void cmd_send_string(int cli_argc, const char **cli_argv)
 {
     const char *direct = CLIENT_MESSAGE;
     int sockfd = -1;
-    char recv_buf[RECV_BUF_SIZE];
+    char recv_buf[PACKET_SIZE];
+    int result = RESULT_OK;
 
     struct option_entry entries[] = {
         {"string", 's', "Enter string for sending", OPTION_FLAG_string, .string = &direct},
@@ -154,20 +155,22 @@ void cmd_send_string(int cli_argc, const char **cli_argv)
         opt_parse_usage(eprintf, cli_argv[0], entries);
     }
     else {
-
         do {
-            if (!isOk(socket_tcp_client_create(&sockfd, 0, 0, SERVER_ADDR, SERVER_PORT))) {
+            result = socket_tcp_client_create(&sockfd, 0, 0, SERVER_ADDR, SERVER_PORT);
+            if (!isOk(result)) {
                 break;
             }
 
             /* Send message to server */
-            if (!isOk(socket_send_data(sockfd, (void*)direct, strlen(direct)))) {
+            result = socket_send_data(sockfd, (void*)direct, strlen(direct));
+            if (!isOk(result)) {
                 log_msg(LOG_ERR, "❌ send failed");
             }
 
             /* Receive reply */
             ssize_t received = sizeof(recv_buf);
-            if (!isOk(socket_read_data(sockfd, recv_buf, &received, SOCKET_READ_TIMEOUT_MS))) {
+            result = socket_read_data(sockfd, recv_buf, &received, SOCKET_READ_TIMEOUT_MS);
+            if (!isOk(result)) {
                 log_msg(LOG_ERR, "❌ recv failed");
                 break;
             }
@@ -177,7 +180,12 @@ void cmd_send_string(int cli_argc, const char **cli_argv)
             /* Print server response */
             print_string("Server reply: %s\n", recv_buf);
 
-        }while(0);
+        } while(0);
+
+        if (!isOk(result)) {
+            print_string("❌ Server not responding\n");
+        }
+
     }
 
 
