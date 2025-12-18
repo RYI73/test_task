@@ -5,13 +5,11 @@ BUILD_DIR_ARM=build_arm
 
 case $1 in
   --arm)
-        cd /home/pi
-        
         if [ ! -d "$BUILD_DIR_ARM" ]; then
-             cmake -B $BUILD_DIR_ARM -DCMAKE_BUILD_TYPE=Release -DBUILD_PLATFORM_ARM=ON -DCMAKE_TOOLCHAIN_FILE=/opt/cross/Toolchain-RaspberryPi.cmake 
+             cmake -B $BUILD_DIR_ARM -DCMAKE_BUILD_TYPE=Release -DBUILD_PLATFORM_ARM=ON -DCMAKE_TOOLCHAIN_FILE=../raspberry/toolchain-rpi-zero.cmake
         fi
         
-        cd /home/pi/$BUILD_DIR_ARM
+        cd $BUILD_DIR_ARM
         make
         result=$?
     ;;
@@ -27,10 +25,10 @@ case $1 in
     ;;
 
   --clean-arm)
-        if rm -rf /home/pi/$BUILD_DIR_ARM/; then
-            echo "Folder /home/pi/$BUILD_DIR_ARM/ was removed successfully."
+        if rm -rf $BUILD_DIR_ARM/; then
+            echo "Folder $BUILD_DIR_ARM/ was removed successfully."
         else
-            echo "[WARN] Folder /home/pi/$BUILD_DIR_ARM/ wasn't removed."
+            echo "[WARN] Folder $BUILD_DIR_ARM/ wasn't removed."
             result=-1
         fi
         result=0

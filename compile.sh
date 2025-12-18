@@ -7,14 +7,7 @@ result2=0
 
 case $1 in
   --arm)
-        docker container run \
-        -v $(pwd):/home/pi/ \
-        -e "LOCAL_USER_ID=${LOCAL_USER_ID}" \
-        -e "LOCAL_USER_NAME=${LOCAL_USER_NAME}" \
-        -e "LOCAL_GROUP_ID=${LOCAL_GROUP_ID}" \
-        -e "LOCAL_HOME_PATH=${LOCAL_HOME_PATH}" \
-            raspberry/pi \
-        sh -c '/home/pi/builder.sh --arm'
+        sh -c './builder.sh --arm'
         result1=$?
     ;;
 
@@ -24,14 +17,7 @@ case $1 in
     ;;
 
   --clean)
-        docker container run \
-        -v $(pwd):/home/pi \
-        -e "LOCAL_USER_ID=${LOCAL_USER_ID}" \
-        -e "LOCAL_USER_NAME=${LOCAL_USER_NAME}" \
-        -e "LOCAL_GROUP_ID=${LOCAL_GROUP_ID}" \
-        -e "LOCAL_HOME_PATH=${LOCAL_HOME_PATH}" \
-            raspberry/pi \
-        sh -c '/home/pi/builder.sh --clean-arm'
+        sh -c './builder.sh --clean-arm'
         result1=$?
         sh -c './builder.sh --clean-x86'
         result2=$?
