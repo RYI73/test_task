@@ -16,13 +16,21 @@
 /***********************************************************************************************/
 /** Server IPv4 address (string form) */
 #define SERVER_ADDR "127.0.0.1"
-
 /** Server TCP port */
 #define SERVER_PORT 12345
-
 /** Message sent to server */
 #define CLIENT_MESSAGE "HELLO"
-
-/** Maximum size of receive buffer */
-#define RECV_BUF_SIZE 256
+/** Maximum size of packet */
+#define PACKET_SIZE (1024)
+/** Maximum number of concurrent clients */
+#define MAX_CLIENTS      5
+/** poll() timeout in milliseconds */
+#define POLL_TIMEOUT_MS  500
+/***********************************************************************************************/
+/** Expected message from client */
+#define EXPECTED_STRING  "HELLO"
+/** Reply sent on successful match */
+#define OK_REPLY         "OK"
+/** Reply sent on mismatch */
+#define ERR_REPLY        "ERROR"
 /***********************************************************************************************/

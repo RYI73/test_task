@@ -343,14 +343,14 @@ int socket_udp_create(int *ssock, const char *local_ip, u16 local_port, const ch
     return result;
 }
 /***********************************************************************************************/
-int socket_tcp_server_create(int *ssock, const char *local_ip, u16 local_port, int backlog)
+int socket_tcp_server_create(int *ssock, const char *server_ip, u16 server_port, int backlog)
 {
     int result = RESULT_NOT_INITED_ERROR;
     int sock = -1;
     int yes = 1;
 
     do {
-        if (!local_port) {
+        if (!server_port) {
             errno = EINVAL;
             log_msg(LOG_ERR, "Arguments error");
             result = RESULT_ARGUMENT_ERROR;
@@ -370,14 +370,15 @@ int socket_tcp_server_create(int *ssock, const char *local_ip, u16 local_port, i
             // not fatal
         }
 
+        /* Bind socket */
         struct sockaddr_in local;
         memset(&local, 0, sizeof(local));
         local.sin_family = AF_INET;
-        local.sin_port   = htons(local_port);
+        local.sin_port   = htons(server_port);
 
-        if (local_ip && local_ip[0]) {
-            if (inet_pton(AF_INET, local_ip, &local.sin_addr) != 1) {
-                log_msg(LOG_ERR, "inet_pton(local_ip) failed, errno = %d [%s]", errno, strerror(errno));
+        if (server_ip && server_ip[0]) {
+            if (inet_pton(AF_INET, server_ip, &local.sin_addr) != 1) {
+                log_msg(LOG_ERR, "inet_pton(server_ip) failed, errno = %d [%s]", errno, strerror(errno));
                 result = RESULT_INET_PTON_ERROR;
                 break;
             }
@@ -391,13 +392,14 @@ int socket_tcp_server_create(int *ssock, const char *local_ip, u16 local_port, i
             break;
         }
 
+        /* Start listening */
         if (listen(sock, backlog) < 0) {
             log_msg(LOG_ERR, "Listen failed, errno = %d [%s]", errno, strerror(errno));
             result = RESULT_LISTEN_ERROR;
             break;
         }
 
-        log_msg(LOG_DEBUG, "TCP server socket created on %s:%u", local_ip ? local_ip : "0.0.0.0", local_port);
+        log_msg(LOG_DEBUG, "TCP server socket created on %s:%u", server_ip ? server_ip : "0.0.0.0", server_port);
         *ssock = sock;
         result = RESULT_OK;
 

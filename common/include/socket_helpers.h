@@ -125,8 +125,8 @@ int socket_tcp_client_create(int *ssock, const char *local_ip, u16 local_port, c
  * connections with the specified backlog.
  *
  * @param[out] ssock Pointer to an integer where the created socket descriptor will be stored.
- * @param[in]  local_ip String with the local IP address to bind, or NULL/empty for INADDR_ANY.
- * @param[in]  local_port Local port number to bind the socket to.
+ * @param[in]  server_ip String with the local IP address to bind, or NULL/empty for INADDR_ANY.
+ * @param[in]  server_port Local port number to bind the socket to.
  * @param[in]  backlog Maximum number of pending connections in the listen queue.
  *
  * @return RESULT_OK (0) on success, otherwise a negative error code:
@@ -143,7 +143,7 @@ int socket_tcp_client_create(int *ssock, const char *local_ip, u16 local_port, c
  * @warning This function does not handle multiple client connections; that should be
  *          implemented separately (e.g., with select(), poll(), or threads).
  */
-int socket_tcp_server_create(int *ssock, const char *local_ip, u16 local_port, int backlog);
+int socket_tcp_server_create(int *ssock, const char *server_ip, u16 server_port, int backlog);
 
 int socket_udp_create_rx(int *ssock, const char *local_ip, u16 local_port);
 
