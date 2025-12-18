@@ -21,7 +21,6 @@
 #include "logs.h"
 #include "cmd.h"
 #include "error_code.h"
-#include "threads.h"
 
 /***********************************************************************************************/
 static int init(void)

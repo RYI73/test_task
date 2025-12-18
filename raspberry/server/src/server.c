@@ -7,7 +7,6 @@
  * "ERROR". All errors are logged to syslog.
  */
 
-#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +24,7 @@
 #include "protocol.h"
 #include "logs.h"
 #include "socket_helpers.h"
+#include "helpers.h"
 
 /**
  * @brief Global flag controlling main loop execution.

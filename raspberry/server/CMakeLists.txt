@@ -2,8 +2,6 @@ cmake_minimum_required(VERSION 3.12)
 
 project(server)
 
-message(STATUS "Current source dir: ${CMAKE_CURRENT_SOURCE_DIR}")
-
 include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}/../../common/include
 )
@@ -18,4 +16,3 @@ set(SOURCES
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES})
-
