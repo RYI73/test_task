@@ -26,6 +26,7 @@
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "esp_crc.h"
+#include "nvs_flash.h"
 
 #include "driver/spi_slave.h"
 
@@ -35,8 +36,8 @@
 #include "lwip/ip4.h"
 #include "lwip/inet.h"
 
-#define WIFI_SSID              "YOUR_WIFI_SSID"
-#define WIFI_PASS              "YOUR_WIFI_PASSWORD"
+#define WIFI_SSID              "Linksys00283"
+#define WIFI_PASS              "@Valovyi_Ruslan1973"
 
 #define SPI_HOST               SPI2_HOST
 #define SPI_MTU                1500
@@ -96,7 +97,7 @@ static esp_err_t spi_send_ip(const uint8_t *data, size_t len)
     };
 
     xSemaphoreTake(spi_mutex, portMAX_DELAY);
-    esp_err_t ret = spi_slave_transmit(SPI_HOST, &t, portMAX_DELAY);
+    esp_err_t ret = spi_slave_transmit(SPI_HOST, &t, pdMS_TO_TICKS(50));
     xSemaphoreGive(spi_mutex);
 
     return ret;
@@ -119,7 +120,8 @@ static esp_err_t spi_recv_ip(uint8_t *out_buf, size_t max_len, size_t *out_len)
         .rx_buffer = spi_rx_buf,
     };
 
-    esp_err_t ret = spi_slave_transmit(SPI_HOST, &t, portMAX_DELAY);
+//    esp_err_t ret = spi_slave_transmit(SPI_HOST, &t, pdMS_TO_TICKS(50));
+    esp_err_t ret = spi_slave_transmit(SPI_HOST, &t, 0);
     if (ret != ESP_OK) return ret;
 
     spi_ip_hdr_t *hdr = (spi_ip_hdr_t *)spi_rx_buf;
@@ -142,6 +144,63 @@ static esp_err_t spi_recv_ip(uint8_t *out_buf, size_t max_len, size_t *out_len)
     return ESP_OK;
 }
 
+#if 1
+static volatile uint32_t pkt_count = 0;
+static void wifi_sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
+{
+    if (type != WIFI_PKT_DATA)
+        return;
+
+    const wifi_promiscuous_pkt_t *ppkt = (wifi_promiscuous_pkt_t *)buf;
+    const uint8_t *frame = ppkt->payload;
+    uint16_t len = ppkt->rx_ctrl.sig_len;
+
+    /* Мінімум: 802.11 + LLC */
+    if (len < 36)
+        return;
+
+    /* LLC/SNAP header (offset залежить від ToDS/FromDS, тут типовий STA<-AP) */
+    const uint8_t *llc = frame + 24;
+
+    /* SNAP: AA AA 03 00 00 00 08 00 */
+    if (llc[0] != 0xAA || llc[1] != 0xAA || llc[2] != 0x03)
+        return;
+
+    /* IPv4 */
+    if (llc[6] != 0x08 || llc[7] != 0x00)
+        return;
+
+    const struct ip_hdr *ip = (struct ip_hdr *)(llc + 8);
+
+    ESP_LOGI(TAG, "IP pkt proto=%d len=%d",
+             IPH_PROTO(ip),
+             ntohs(IPH_LEN(ip)));
+
+    /* Тут ТИ ОТРИМУЄШ УСІ IP ПАКЕТИ */
+    /* хоч ICMP, хоч UDP, хоч TCP, хоч не на нашу IP */
+
+    /* якщо треба → копіюєш і шлеш по SPI */
+    /*
+    size_t ip_len = ntohs(IPH_LEN(ip));
+    if (ip_len <= SPI_MTU)
+        spi_send_ip((uint8_t *)ip, ip_len);
+    */
+}
+static void wifi_sniffer_init(void)
+{
+    ESP_ERROR_CHECK(esp_wifi_set_promiscuous(false));
+
+    wifi_promiscuous_filter_t filter = {
+        .filter_mask = WIFI_PROMIS_FILTER_MASK_DATA
+    };
+    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_filter(&filter));
+
+    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_rx_cb(wifi_sniffer_cb));
+    ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
+
+    ESP_LOGI(TAG, "WiFi promiscuous sniffer started");
+}
+#else
 /**
  * @brief RAW callback for Wi-Fi -> SPI forwarding
  */
@@ -149,13 +208,15 @@ static u8_t raw_rx_cb(void *arg, struct raw_pcb *pcb,
                       struct pbuf *p, const ip_addr_t *addr)
 {
     (void)arg; (void)pcb; (void)addr;
+    ESP_LOGI(TAG, "recv ln %d", p->tot_len);
 
     if (!p || p->tot_len > SPI_MTU)
         return 0;
 
+
     uint8_t buf[SPI_MTU];
     pbuf_copy_partial(p, buf, p->tot_len, 0);
-    spi_send_ip(buf, p->tot_len);
+//    spi_send_ip(buf, p->tot_len);
 
     return 1; /* packet eaten */
 }
@@ -165,11 +226,12 @@ static u8_t raw_rx_cb(void *arg, struct raw_pcb *pcb,
  */
 static void raw_ip_init(void)
 {
+//    ESP_LOGI(TAG, "raw_ip_init()");
     raw_pcb_ip = raw_new(0); /* 0 = all IPv4 protocols */
     raw_bind(raw_pcb_ip, IP_ADDR_ANY);
     raw_recv(raw_pcb_ip, raw_rx_cb, NULL);
 }
-
+#endif
 /**
  * @brief SPI -> lwIP RX task
  */
@@ -192,7 +254,7 @@ static void spi_rx_task(void *arg)
                 pbuf_free(p);
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(1));
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
 
@@ -201,6 +263,7 @@ static void spi_rx_task(void *arg)
  */
 static void wifi_init_sta(void)
 {
+//    ESP_LOGI(TAG, "wifi_init_sta()");
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
@@ -227,6 +290,16 @@ static void wifi_init_sta(void)
  */
 void app_main(void)
 {
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    esp_log_level_set("spi_slave", ESP_LOG_NONE);
+
+//    ESP_LOGI(TAG, "Start ESP32 utility");
     spi_mutex = xSemaphoreCreateMutex();
 
     /* SPI slave init */
@@ -249,13 +322,14 @@ void app_main(void)
     ESP_ERROR_CHECK(spi_slave_initialize(SPI_HOST, &buscfg, &slvcfg, 0));
 
     wifi_init_sta();
-    raw_ip_init();
+//    raw_ip_init();
+    wifi_sniffer_init();
 
     xTaskCreate(spi_rx_task,
                 "spi_rx_task",
                 4096,
                 NULL,
-                5,
+                3,
                 NULL);
 
     ESP_LOGI(TAG, "L3 WiFi <-> SPI router started");
