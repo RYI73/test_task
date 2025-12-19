@@ -376,7 +376,7 @@ int socket_tcp_server_create(int *ssock, const char *server_ip, u16 server_port,
         local.sin_family = AF_INET;
         local.sin_port   = htons(server_port);
 
-        if (server_ip && server_ip[0]) {
+        if (server_ip && server_ip[0] != '0') {
             if (inet_pton(AF_INET, server_ip, &local.sin_addr) != 1) {
                 log_msg(LOG_ERR, "inet_pton(server_ip) failed, errno = %d [%s]", errno, strerror(errno));
                 result = RESULT_INET_PTON_ERROR;

@@ -87,7 +87,7 @@ int main(void)
         sigemptyset(&sa.sa_mask);
         sigaction(SIGINT, &sa, NULL);
 
-        result = socket_tcp_server_create(&listen_fd, SERVER_ADDR, SERVER_PORT, MAX_CLIENTS);
+        result = socket_tcp_server_create(&listen_fd, ANY_ADDR, SERVER_PORT, MAX_CLIENTS);
         if (!isOk(result)) {
             break;
         }
