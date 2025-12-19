@@ -35,6 +35,8 @@
 #include "lwip/ip.h"
 #include "lwip/ip4.h"
 #include "lwip/inet.h"
+#include "lwip/etharp.h"
+#include "lwip/ip4_addr.h"
 
 #define WIFI_SSID              "Linksys00283"
 #define WIFI_PASS              "@Valovyi_Ruslan1973"
@@ -59,8 +61,68 @@ static const char *TAG = "ESP32_SPI_ROUTER";
 static SemaphoreHandle_t spi_mutex;
 static struct raw_pcb *raw_pcb_ip;
 
+//static SemaphoreHandle_t count_mutex;
+//static volatile uint32_t pkt_count = 0;
+//static volatile uint32_t udp_count = 0;
+//static volatile uint32_t tcp_count = 0;
+//static volatile uint32_t icmp_count = 0;
+//static volatile uint32_t arp_count = 0;
+typedef struct {
+    int arp;
+    int icmp;
+    int tcp;
+    int udp;
+    int all;
+} packet_counter_t;
+
+packet_counter_t counters = {0};
+static portMUX_TYPE counter_mux = portMUX_INITIALIZER_UNLOCKED;
+
 static uint8_t spi_rx_buf[sizeof(spi_ip_hdr_t) + SPI_MTU + sizeof(uint32_t)];
 static uint8_t spi_tx_buf[sizeof(spi_ip_hdr_t) + SPI_MTU + sizeof(uint32_t)];
+
+typedef struct __attribute__((packed)) {
+    uint8_t dest[6];
+    uint8_t src[6];
+    uint16_t type;
+} eth_hdr_t;
+
+typedef struct __attribute__((packed)) {
+    uint8_t  v_hl;
+    uint8_t  tos;
+    uint16_t len;
+    uint16_t id;
+    uint16_t offset;
+    uint8_t  ttl;
+    uint8_t  proto;
+    uint16_t chksum;
+    uint32_t src;
+    uint32_t dst;
+} ip_hdr_t;
+
+#define WLAN_FC_TYPE(fc)        (((fc) >> 2) & 0x3)
+#define WLAN_FC_SUBTYPE(fc)     (((fc) >> 4) & 0xF)
+#define WLAN_FC_TO_DS(fc)       ((fc) & 0x0100)
+#define WLAN_FC_FROM_DS(fc)     ((fc) & 0x0200)
+
+#define WLAN_TYPE_DATA          2
+#define WLAN_QOS_DATA           8
+
+// -------------------------- NETIF --------------------------
+struct netif netif_wifi;
+struct netif netif_spi;
+
+// -------------------------- UTILITIES --------------------------
+void dump_hex(const uint8_t* data, int len) {
+    char line[80];
+    for (int i = 0; i < len; i += 16) {
+        int l = snprintf(line, sizeof(line), "%04x: ", i);
+        for (int j = 0; j < 16 && (i+j) < len; j++) {
+            l += snprintf(line+l, sizeof(line)-l, "%02x ", data[i+j]);
+        }
+        ESP_LOGI(TAG, "%s", line);
+    }
+}
 
 /**
  * @brief Send IPv4 packet to SPI master
@@ -145,8 +207,6 @@ static esp_err_t spi_recv_ip(uint8_t *out_buf, size_t max_len, size_t *out_len)
 }
 
 #if 1
-static volatile uint32_t pkt_count = 0;
-static SemaphoreHandle_t count_mutex;
 
 //static void wifi_sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
 //{
@@ -188,33 +248,212 @@ static SemaphoreHandle_t count_mutex;
 //        spi_send_ip((uint8_t *)ip, ip_len);
 //    */
 //}
-static void wifi_sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
-{
-    (void)buf; (void)type;
 
-    // просто інкрементуємо лічильник у критичній секції
-    if (count_mutex) {
-        if (xSemaphoreTake(count_mutex, 0) == pdTRUE) {
-            pkt_count++;
-            xSemaphoreGive(count_mutex);
-        }
-    }
-}
+//static void wifi_sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
+//{
+//    (void)buf; (void)type;
 
-static void wifi_sniffer_init(void)
-{
-    ESP_ERROR_CHECK(esp_wifi_set_promiscuous(false));
+//    if (count_mutex) {
+//        if (xSemaphoreTake(count_mutex, 0) == pdTRUE) {
+//            pkt_count++;
+//            xSemaphoreGive(count_mutex);
+//        }
+//    }
+//}
 
-    wifi_promiscuous_filter_t filter = {
-        .filter_mask = WIFI_PROMIS_FILTER_MASK_DATA
-    };
-    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_filter(&filter));
+//void wifi_sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
+//{
+//    if (type != WIFI_PKT_DATA)
+//        return;
 
-    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_rx_cb(wifi_sniffer_cb));
-    ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
+//    if (count_mutex) {
+//        if (xSemaphoreTake(count_mutex, 0) == pdTRUE) {
+//            pkt_count++;
+//            xSemaphoreGive(count_mutex);
+//        }
+//    }
 
-    ESP_LOGI(TAG, "WiFi promiscuous sniffer started");
-}
+//    const wifi_promiscuous_pkt_t *pkt = buf;
+//    const uint8_t *payload = pkt->payload;
+
+////    ESP_LOGI(TAG, "Packet received, len=%d", pkt->rx_ctrl.sig_len);
+////    ESP_LOG_BUFFER_HEXDUMP(TAG, payload, 32, ESP_LOG_INFO);
+//    ESP_LOGI(TAG, "802.11 header:");
+//    ESP_LOG_BUFFER_HEXDUMP(TAG, payload, 24, ESP_LOG_INFO); // перші 24 байти MAC header
+//    ESP_LOGI(TAG, "LLC/SNAP:");
+//    ESP_LOG_BUFFER_HEXDUMP(TAG, payload + 24, 8, ESP_LOG_INFO); // наступні 8 байт
+//    ESP_LOGI(TAG, "Payload (possible Ethernet):");
+//    ESP_LOG_BUFFER_HEXDUMP(TAG, payload + 24 + 8, 32, ESP_LOG_INFO); // наступні 32 байти
+
+//    // 802.11 data header (звичайно 24 байти)
+//    const uint8_t *llc = payload + 24;
+
+//    // LLC + SNAP = 8 байт
+//    const eth_hdr_t *eth =
+//        (const eth_hdr_t *)(llc + 8);
+
+//    uint16_t ethertype = ntohs(eth->type);
+
+//    if (ethertype == 0x0806) {
+//        // ARP
+//        if (count_mutex) {
+//            if (xSemaphoreTake(count_mutex, 0) == pdTRUE) {
+//                arp_count++;
+//                xSemaphoreGive(count_mutex);
+//            }
+//        }
+//        return;
+//    }
+
+//    if (ethertype != 0x0800)
+//        return; // не IPv4
+
+//    const ip_hdr_t *ip =
+//        (const ip_hdr_t *)(eth + 1);
+
+//    uint32_t src = ntohl(ip->src);
+//    uint32_t dst = ntohl(ip->dst);
+
+//    // мережа 10.0.0.0/8
+//    if ((src & 0xFF000000) != 0x0A000000 &&
+//        (dst & 0xFF000000) != 0x0A000000)
+//        return;
+
+//    if (ip->proto == 1) {
+//        if (count_mutex) {
+//            if (xSemaphoreTake(count_mutex, 0) == pdTRUE) {
+//                icmp_count++;
+//                xSemaphoreGive(count_mutex);
+//            }
+//        }
+//    } else if (ip->proto == 6) {
+//        if (count_mutex) {
+//            if (xSemaphoreTake(count_mutex, 0) == pdTRUE) {
+//                tcp_count++;
+//                xSemaphoreGive(count_mutex);
+//            }
+//        }
+//    } else if (ip->proto == 17) {
+//        if (count_mutex) {
+//            if (xSemaphoreTake(count_mutex, 0) == pdTRUE) {
+//                udp_count++;
+//                xSemaphoreGive(count_mutex);
+//            }
+//        }
+//    }
+//}
+
+//static void dump_hex(const char *tag, const uint8_t *buf, int len)
+//{
+//    char line[80];
+//    int pos = 0;
+
+//    for (int i = 0; i < len && i < 64; i++) { // не більше 64 байт
+//        pos += snprintf(line + pos, sizeof(line) - pos,
+//                        "%02x ", buf[i]);
+//        if ((i & 0x0F) == 0x0F) {
+//            ESP_LOGI(tag, "%s", line);
+//            pos = 0;
+//        }
+//    }
+//    if (pos)
+//        ESP_LOGI(tag, "%s", line);
+//}
+
+//void wifi_sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
+//{
+//    if (type != WIFI_PKT_DATA || !buf) return;
+
+//    const wifi_promiscuous_pkt_t *ppkt = buf;
+//    const uint8_t *p = ppkt->payload;
+//    int len = ppkt->rx_ctrl.sig_len;
+
+//    ESP_LOGI(TAG, "---------------- PACKET ----------------");
+//    ESP_LOGI(TAG, "RSSI=%d len=%d", ppkt->rx_ctrl.rssi, len);
+
+//    ESP_LOGI(TAG, "802.11 header (raw):");
+//    dump_hex(TAG, p, 32);
+
+//    uint16_t fc = p[0] | (p[1] << 8);
+//    bool to_ds   = fc & BIT(8);
+//    bool from_ds = fc & BIT(9);
+//    bool qos     = ((fc & 0x0C) == 0x08);
+
+//    int hdr_len = 24;
+//    if (to_ds && from_ds) hdr_len = 30;
+//    if (qos) hdr_len += 2;
+
+//    ESP_LOGI(TAG,
+//        "FC=0x%04x toDS=%d fromDS=%d qos=%d hdr_len=%d",
+//        fc, to_ds, from_ds, qos, hdr_len);
+
+//    if (len < hdr_len + 8) {
+//        ESP_LOGW(TAG, "Frame too short for LLC");
+//        return;
+//    }
+
+//    const uint8_t *llc = p + hdr_len;
+
+//    ESP_LOGI(TAG, "LLC/SNAP:");
+//    dump_hex(TAG, llc, 8);
+
+//    if (!(llc[0] == 0xAA && llc[1] == 0xAA && llc[2] == 0x03)) {
+//        ESP_LOGW(TAG, "No SNAP header");
+//        return;
+//    }
+
+//    uint16_t ethertype = (llc[6] << 8) | llc[7];
+//    ESP_LOGI(TAG, "Ethertype=0x%04x", ethertype);
+
+//    portENTER_CRITICAL_ISR(&counter_mux);
+//    counters.all++;
+
+//    if (ethertype == 0x0806) {
+//        counters.arp++;
+//        ESP_LOGI(TAG, "Parsed: ARP");
+//    }
+//    else if (ethertype == 0x0800) {
+//        const uint8_t *ip = llc + 8;
+//        uint8_t proto = ip[9];
+
+//        ESP_LOGI(TAG, "IPv4 proto=%u", proto);
+
+//        if (proto == 1) {
+//            counters.icmp++;
+//            ESP_LOGI(TAG, "Parsed: ICMP");
+//        } else if (proto == 6) {
+//            counters.tcp++;
+//            ESP_LOGI(TAG, "Parsed: TCP");
+//        } else if (proto == 17) {
+//            counters.udp++;
+//            ESP_LOGI(TAG, "Parsed: UDP");
+//        } else {
+//            ESP_LOGI(TAG, "Parsed: IPv4 other");
+//        }
+//    }
+//    else {
+//        ESP_LOGI(TAG, "Unknown ethertype");
+//    }
+
+//    portEXIT_CRITICAL_ISR(&counter_mux);
+//}
+
+
+
+//static void wifi_sniffer_init(void)
+//{
+//    ESP_ERROR_CHECK(esp_wifi_set_promiscuous(false));
+
+//    wifi_promiscuous_filter_t filter = {
+//        .filter_mask = WIFI_PROMIS_FILTER_MASK_DATA
+//    };
+//    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_filter(&filter));
+
+//    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_rx_cb(wifi_sniffer_cb));
+//    ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
+
+//    ESP_LOGI(TAG, "WiFi promiscuous sniffer started");
+//}
 #else
 /**
  * @brief RAW callback for Wi-Fi -> SPI forwarding
@@ -223,14 +462,22 @@ static u8_t raw_rx_cb(void *arg, struct raw_pcb *pcb,
                       struct pbuf *p, const ip_addr_t *addr)
 {
     (void)arg; (void)pcb; (void)addr;
-    ESP_LOGI(TAG, "recv ln %d", p->tot_len);
 
-    if (!p || p->tot_len > SPI_MTU)
-        return 0;
+    if (count_mutex) {
+        if (xSemaphoreTake(count_mutex, 0) == pdTRUE) {
+            pkt_count++;
+            xSemaphoreGive(count_mutex);
+        }
+    }
+
+//    ESP_LOGI(TAG, "recv ln %d", p->tot_len);
+
+//    if (!p || p->tot_len > SPI_MTU)
+//        return 0;
 
 
-    uint8_t buf[SPI_MTU];
-    pbuf_copy_partial(p, buf, p->tot_len, 0);
+//    uint8_t buf[SPI_MTU];
+//    pbuf_copy_partial(p, buf, p->tot_len, 0);
 //    spi_send_ip(buf, p->tot_len);
 
     return 1; /* packet eaten */
@@ -261,24 +508,23 @@ static void spi_rx_task(void *arg)
     IP_ADDR4(&dest, 0,0,0,0); /* IPv4 wildcard */
 
     while (1) {
-        if (spi_recv_ip(buf, sizeof(buf), &len) == ESP_OK) {
-            struct pbuf *p = pbuf_alloc(PBUF_RAW, len, PBUF_POOL);
-            if (p) {
-                pbuf_take(p, buf, len);
-                raw_sendto(raw_pcb_ip, p, &dest);
-                pbuf_free(p);
-            }
-        }
+//        if (spi_recv_ip(buf, sizeof(buf), &len) == ESP_OK) {
+//            struct pbuf *p = pbuf_alloc(PBUF_RAW, len, PBUF_POOL);
+//            if (p) {
+//                pbuf_take(p, buf, len);
+//                raw_sendto(raw_pcb_ip, p, &dest);
+//                pbuf_free(p);
+//            }
+//        }
         vTaskDelay(pdMS_TO_TICKS(2000));
-        uint32_t count = 0;
 
-        if (count_mutex && xSemaphoreTake(count_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-            count = pkt_count;
-            xSemaphoreGive(count_mutex);
-        }
+        packet_counter_t c;
+        portENTER_CRITICAL(&counter_mux);
+        c = counters;
+        portEXIT_CRITICAL(&counter_mux);
 
-        ESP_LOGI(TAG, "Packets received in last 2s: %u", count);
-    }
+        ESP_LOGI(TAG, "Packets received: ALL=%d ARP=%d ICMP=%d TCP=%d UDP=%d",
+                 c.all, c.arp, c.icmp, c.tcp, c.udp);
 }
 
 /**
@@ -308,6 +554,120 @@ static void wifi_init_sta(void)
     ESP_ERROR_CHECK(esp_wifi_connect());
 }
 
+
+// -------------------------- PACKET PARSING --------------------------
+void parse_ethernet(struct pbuf *p) {
+    if (!p) return;
+    struct eth_hdr *eth = (struct eth_hdr *)p->payload;
+
+    portENTER_CRITICAL(&counter_mux);
+    counters.all++;
+    switch (htons(eth->type)) {
+        case ETHTYPE_ARP: counters.arp++; break;
+        case ETHTYPE_IP: {
+            struct ip_hdr *iph = (struct ip_hdr *)((uint8_t*)eth + sizeof(struct eth_hdr));
+            switch (IPH_PROTO(iph)) {
+                case IP_PROTO_ICMP: counters.icmp++; break;
+                case IP_PROTO_TCP: counters.tcp++; break;
+                case IP_PROTO_UDP: counters.udp++; break;
+            }
+            break;
+        }
+    }
+    portEXIT_CRITICAL(&counter_mux);
+
+    ESP_LOGI(TAG, "Packet received: eth_type=0x%04x len=%d", htons(eth->type), p->len);
+    dump_hex((uint8_t*)p->payload, p->len);
+}
+
+// -------------------------- RAW HOOK --------------------------
+// --- lwIP hook для перехоплення вхідних пакетів ---
+err_t lwip_hook_netif_input(struct pbuf *p, struct netif *inp) {
+    if (!p) return ERR_OK;
+
+    // --- Простий парсинг: лише IP/ARP ---
+    uint16_t eth_type = (p->payload[12] << 8) | p->payload[13];
+
+    portENTER_CRITICAL(&counter_mux);
+    counters.all++;
+    if (eth_type == 0x0806) counters.arp++;
+    else if (eth_type == 0x0800) {
+        uint8_t proto = ((uint8_t *)p->payload)[23];
+        if (proto == 1) counters.icmp++;
+        else if (proto == 6) counters.tcp++;
+        else if (proto == 17) counters.udp++;
+    }
+    portEXIT_CRITICAL(&counter_mux);
+
+    ESP_LOGI(TAG, "Packet received: eth_type=0x%04x len=%d", eth_type, p->len);
+    hexdump(p->payload, p->len);
+
+    // --- let lwIP continue processing normally ---
+    return ERR_OK;
+}
+
+// --- Ініціалізація SPI netif ---
+struct netif netif_spi;
+static void init_spi_netif(void) {
+    ip4_addr_t ip, gw, mask;
+    IP4_ADDR(&ip, 10,0,0,2);
+    IP4_ADDR(&gw, 10,0,0,1); // RP Zero
+    IP4_ADDR(&mask, 255,255,255,0);
+
+    memset(&netif_spi, 0, sizeof(netif_spi));
+    netif_add(&netif_spi, &ip, &mask, &gw, NULL, NULL, tcpip_input);
+    netif_set_up(&netif_spi);
+    ESP_LOGI(TAG, "SPI netif initialized: 10.0.0.2/24");
+
+    add_static_arp_for_rp_zero(&netif_spi);
+}
+
+// -------------------------- NETIF INIT --------------------------
+void init_netif(void) {
+    ip4_addr_t ip_wifi, gw_wifi, mask_wifi;
+    ip4_addr_t ip_spi, gw_spi, mask_spi;
+
+    IP4_ADDR(&ip_wifi, 192,168,1,123);
+    IP4_ADDR(&gw_wifi, 192,168,1,1);
+    IP4_ADDR(&mask_wifi, 255,255,255,0);
+
+    IP4_ADDR(&ip_spi, 10,0,0,2);
+    IP4_ADDR(&gw_spi, 10,0,0,1);
+    IP4_ADDR(&mask_spi, 255,255,255,0);
+
+    netif_add(&netif_wifi, &ip_wifi, &mask_wifi, &gw_wifi,
+              NULL, ethernetif_init, tcpip_input);
+    netif_set_default(&netif_wifi);
+    netif_set_up(&netif_wifi);
+
+    netif_add(&netif_spi, &ip_spi, &mask_spi, &gw_spi,
+              NULL, spiif_init, tcpip_input);
+    netif_set_up(&netif_spi);
+
+    // Proxy ARP для 10.0.0.1
+    struct eth_addr mac;
+    mac.addr[0]=0x02; mac.addr[1]=0x00; mac.addr[2]=0x00;
+    mac.addr[3]=0x00; mac.addr[4]=0x00; mac.addr[5]=0x02;
+    ip4_addr_t ip;
+    IP4_ADDR(&ip, 10,0,0,1);
+    etharp_add_static_entry(&ip, &mac);
+}
+
+// Ініціалізація статичного ARP для 10.0.0.1
+void add_static_arp_for_rp_zero() {
+    ip4_addr_t ip;
+    IP4_ADDR(&ip, 10, 0, 0, 1);
+
+    struct eth_addr mac = {{0x02, 0x00, 0x00, 0x00, 0x00, 0x02}};
+
+    err_t res = etharp_add_static_entry(&ip, &mac);
+    if(res == ERR_OK) {
+        ESP_LOGI(TAG, "Static ARP entry added for 10.0.0.1 -> 02:00:00:00:00:02");
+    } else {
+        ESP_LOGE(TAG, "Failed to add static ARP entry: %d", res);
+    }
+}
+
 /**
  * @brief Application entry point
  */
@@ -324,6 +684,7 @@ void app_main(void)
 
 //    ESP_LOGI(TAG, "Start ESP32 utility");
     spi_mutex = xSemaphoreCreateMutex();
+//    count_mutex = xSemaphoreCreateMutex();
 
     /* SPI slave init */
     spi_bus_config_t buscfg = {
@@ -346,7 +707,16 @@ void app_main(void)
 
     wifi_init_sta();
 //    raw_ip_init();
-    wifi_sniffer_init();
+//    wifi_sniffer_init();
+    tcpip_adapter_init();
+    tcpip_init(NULL, NULL);
+
+    init_netif();
+
+    init_spi_netif();       // SPI netif (10.0.0.2)
+
+    // --- Регіструємо lwIP hook ---
+    ip_input_hook = lwip_hook_netif_input;
 
     xTaskCreate(spi_rx_task,
                 "spi_rx_task",
