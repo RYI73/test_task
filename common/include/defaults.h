@@ -1,10 +1,7 @@
 #pragma once
 
 /***********************************************************************************************/
-// TODO move to json config
-#define INTERFACE_NAME                          "eth0"
 #define INTERFACE_NAME_TUN0                     "tun0"
-#define INTERFACE_NAME_TUN1                     "tun1"
 /***********************************************************************************************/
 #define DEVICE_TUN                              "/dev/net/tun"
 #define PROC_PATH                               "/proc"
@@ -23,15 +20,15 @@
 /** Server IPv4 address (string form) */
 #define SERVER_ADDR                             "192.168.1.122"
 /** Server TCP port */
-#define SERVER_PORT                             12345
+#define SERVER_PORT                             (12345)
 /** Message sent to server */
 #define CLIENT_MESSAGE                          "HELLO"
 /** Maximum size of packet */
 #define PACKET_SIZE                             (1024)
 /** Maximum number of concurrent clients */
-#define MAX_CLIENTS                             5
+#define MAX_CLIENTS                             (5)
 /** poll() timeout in milliseconds */
-#define POLL_TIMEOUT_MS                         500
+#define POLL_TIMEOUT_MS                         (500)
 /***********************************************************************************************/
 /** Expected message from client */
 #define EXPECTED_STRING                         "HELLO"
