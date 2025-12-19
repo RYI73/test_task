@@ -146,46 +146,61 @@ static esp_err_t spi_recv_ip(uint8_t *out_buf, size_t max_len, size_t *out_len)
 
 #if 1
 static volatile uint32_t pkt_count = 0;
+static SemaphoreHandle_t count_mutex;
+
+//static void wifi_sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
+//{
+//    if (type != WIFI_PKT_DATA)
+//        return;
+
+//    const wifi_promiscuous_pkt_t *ppkt = (wifi_promiscuous_pkt_t *)buf;
+//    const uint8_t *frame = ppkt->payload;
+//    uint16_t len = ppkt->rx_ctrl.sig_len;
+
+//    /* Мінімум: 802.11 + LLC */
+//    if (len < 36)
+//        return;
+
+//    /* LLC/SNAP header (offset залежить від ToDS/FromDS, тут типовий STA<-AP) */
+//    const uint8_t *llc = frame + 24;
+
+//    /* SNAP: AA AA 03 00 00 00 08 00 */
+//    if (llc[0] != 0xAA || llc[1] != 0xAA || llc[2] != 0x03)
+//        return;
+
+//    /* IPv4 */
+//    if (llc[6] != 0x08 || llc[7] != 0x00)
+//        return;
+
+//    const struct ip_hdr *ip = (struct ip_hdr *)(llc + 8);
+
+//    ESP_LOGI(TAG, "IP pkt proto=%d len=%d",
+//             IPH_PROTO(ip),
+//             ntohs(IPH_LEN(ip)));
+
+//    /* Тут ТИ ОТРИМУЄШ УСІ IP ПАКЕТИ */
+//    /* хоч ICMP, хоч UDP, хоч TCP, хоч не на нашу IP */
+
+//    /* якщо треба → копіюєш і шлеш по SPI */
+//    /*
+//    size_t ip_len = ntohs(IPH_LEN(ip));
+//    if (ip_len <= SPI_MTU)
+//        spi_send_ip((uint8_t *)ip, ip_len);
+//    */
+//}
 static void wifi_sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
 {
-    if (type != WIFI_PKT_DATA)
-        return;
+    (void)buf; (void)type;
 
-    const wifi_promiscuous_pkt_t *ppkt = (wifi_promiscuous_pkt_t *)buf;
-    const uint8_t *frame = ppkt->payload;
-    uint16_t len = ppkt->rx_ctrl.sig_len;
-
-    /* Мінімум: 802.11 + LLC */
-    if (len < 36)
-        return;
-
-    /* LLC/SNAP header (offset залежить від ToDS/FromDS, тут типовий STA<-AP) */
-    const uint8_t *llc = frame + 24;
-
-    /* SNAP: AA AA 03 00 00 00 08 00 */
-    if (llc[0] != 0xAA || llc[1] != 0xAA || llc[2] != 0x03)
-        return;
-
-    /* IPv4 */
-    if (llc[6] != 0x08 || llc[7] != 0x00)
-        return;
-
-    const struct ip_hdr *ip = (struct ip_hdr *)(llc + 8);
-
-    ESP_LOGI(TAG, "IP pkt proto=%d len=%d",
-             IPH_PROTO(ip),
-             ntohs(IPH_LEN(ip)));
-
-    /* Тут ТИ ОТРИМУЄШ УСІ IP ПАКЕТИ */
-    /* хоч ICMP, хоч UDP, хоч TCP, хоч не на нашу IP */
-
-    /* якщо треба → копіюєш і шлеш по SPI */
-    /*
-    size_t ip_len = ntohs(IPH_LEN(ip));
-    if (ip_len <= SPI_MTU)
-        spi_send_ip((uint8_t *)ip, ip_len);
-    */
+    // просто інкрементуємо лічильник у критичній секції
+    if (count_mutex) {
+        if (xSemaphoreTake(count_mutex, 0) == pdTRUE) {
+            pkt_count++;
+            xSemaphoreGive(count_mutex);
+        }
+    }
 }
+
 static void wifi_sniffer_init(void)
 {
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(false));
@@ -254,7 +269,15 @@ static void spi_rx_task(void *arg)
                 pbuf_free(p);
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(5));
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        uint32_t count = 0;
+
+        if (count_mutex && xSemaphoreTake(count_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            count = pkt_count;
+            xSemaphoreGive(count_mutex);
+        }
+
+        ESP_LOGI(TAG, "Packets received in last 2s: %u", count);
     }
 }
 
