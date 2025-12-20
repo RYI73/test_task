@@ -1,10 +1,15 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
+
+#include "esp_system.h"
+#include "esp_err.h"
 #include "esp_log.h"
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
+#include "esp_crc.h"
 #include "nvs_flash.h"
 
 #include "lwip/netif.h"
@@ -13,6 +18,7 @@
 #include "lwip/pbuf.h"
 #include "lwip/tcp.h"
 
+#include "driver/spi_slave.h"
 
 #include "lwip/netif.h"
 #include "lwip/ip4.h"
@@ -31,8 +37,28 @@
 #define WIFI_SSID "Linksys00283"
 #define WIFI_PASS "@Valovyi_Ruslan1973"
 
+#define SPI_HOST               SPI2_HOST
+#define SPI_MTU                1500
+#define SPI_MAGIC              0x49504657u
+#define SPI_PROTO_VERSION      1
+
+
+/**
+ * @brief SPI framed IPv4 packet header
+ */
+typedef struct __attribute__((packed)) {
+    uint32_t magic;     /**< Frame magic */
+    uint8_t  version;   /**< Protocol version */
+    uint8_t  flags;     /**< Reserved */
+    uint16_t length;    /**< IPv4 packet length */
+} spi_ip_hdr_t;
+
+static uint8_t spi_rx_buf[sizeof(spi_ip_hdr_t) + SPI_MTU + sizeof(uint32_t)];
+static uint8_t spi_tx_buf[sizeof(spi_ip_hdr_t) + SPI_MTU + sizeof(uint32_t)];
+
 static const char *TAG = "ROUTER";
 static EventGroupHandle_t wifi_event_group;
+static SemaphoreHandle_t spi_mutex;
 
 static void dump_bytes(const uint8_t *buf, int len)
 {
@@ -47,62 +73,117 @@ static void dump_bytes(const uint8_t *buf, int len)
     }
 }
 
-/* ===================== L3 + TCP LOGGER ===================== */
+/**
+ * @brief Send IPv4 packet to SPI master
+ *
+ * @param data Pointer to IPv4 packet
+ * @param len  Packet length
+ *
+ * @return ESP_OK on success
+ */
+static esp_err_t spi_send_ip(const uint8_t *data, size_t len)
+{
+    if (!data || len == 0 || len > SPI_MTU) {
+        return ESP_ERR_INVALID_ARG;
+    }
 
-//static void icmp_echo_reply(struct pbuf *p)
-//{
-//    struct ip_hdr *iph = (struct ip_hdr *)p->payload;
+    spi_ip_hdr_t hdr = {
+        .magic   = SPI_MAGIC,
+        .version = SPI_PROTO_VERSION,
+        .flags   = 0,
+        .length  = len
+    };
 
-//    if (IPH_PROTO(iph) != IP_PROTO_ICMP) return;
+    uint32_t crc = esp_crc32_le(0, data, len);
+    size_t off = 0;
 
-//    uint16_t ip_hlen = IPH_HL_BYTES(iph);
-//    if (p->len < ip_hlen + sizeof(struct icmp_echo_hdr)) return;
+    memcpy(&spi_tx_buf[off], &hdr, sizeof(hdr)); off += sizeof(hdr);
+    memcpy(&spi_tx_buf[off], data, len);         off += len;
+    memcpy(&spi_tx_buf[off], &crc, sizeof(crc)); off += sizeof(crc);
 
-//    struct icmp_echo_hdr *icmp =
-//        (struct icmp_echo_hdr *)((uint8_t *)iph + ip_hlen);
+    spi_slave_transaction_t t = {
+        .length    = off * 8,
+        .tx_buffer = spi_tx_buf,
+        .rx_buffer = NULL,
+    };
 
-//    if (icmp->type != ICMP_ECHO) return;
+    xSemaphoreTake(spi_mutex, portMAX_DELAY);
+    esp_err_t ret = spi_slave_transmit(SPI_HOST, &t, pdMS_TO_TICKS(50));
+    xSemaphoreGive(spi_mutex);
 
-//    struct pbuf *q = pbuf_alloc(PBUF_IP, p->tot_len, PBUF_RAM);
-//    if (!q) return;
+    return ret;
+}
 
-//    pbuf_copy(q, p);
+/**
+ * @brief Receive IPv4 packet from SPI master
+ *
+ * @param out_buf Output buffer
+ * @param max_len Buffer size
+ * @param out_len Received packet length
+ *
+ * @return ESP_OK if packet received
+ */
+static esp_err_t spi_recv_ip(uint8_t *out_buf, size_t max_len, size_t *out_len)
+{
+    spi_slave_transaction_t t = {
+        .length    = sizeof(spi_rx_buf) * 8,
+        .tx_buffer = NULL,
+        .rx_buffer = spi_rx_buf,
+    };
 
-//    struct ip_hdr *qiph = (struct ip_hdr *)q->payload;
-//    struct icmp_echo_hdr *qicmp =
-//        (struct icmp_echo_hdr *)((uint8_t *)qiph + ip_hlen);
+    esp_err_t ret = spi_slave_transmit(SPI_HOST, &t, pdMS_TO_TICKS(50));
+//    esp_err_t ret = spi_slave_transmit(SPI_HOST, &t, 0);
+    if (ret != ESP_OK) return ret;
 
-//    /* ===== copy IPs out of packed header ===== */
-//    ip4_addr_t src, dst;
-//    ip4_addr_copy(src, qiph->src);
-//    ip4_addr_copy(dst, qiph->dest);
+    spi_ip_hdr_t *hdr = (spi_ip_hdr_t *)spi_rx_buf;
+    if (hdr->magic != SPI_MAGIC || hdr->version != SPI_PROTO_VERSION)
+        return ESP_FAIL;
 
-//    /* ===== swap IPs in packet ===== */
-//    ip4_addr_copy(qiph->src, dst);
-//    ip4_addr_copy(qiph->dest, src);
+    if (hdr->length == 0 || hdr->length > max_len || hdr->length > SPI_MTU)
+        return ESP_FAIL;
 
-//    /* ===== ICMP Echo Reply ===== */
-//    qicmp->type = ICMP_ER;
-//    qicmp->chksum = 0;
-//    qicmp->chksum = inet_chksum(qicmp, q->tot_len - ip_hlen);
+    uint8_t *payload = spi_rx_buf + sizeof(spi_ip_hdr_t);
+    uint32_t rx_crc;
+    memcpy(&rx_crc, payload + hdr->length, sizeof(rx_crc));
 
-//    /* ===== IP checksum ===== */
-//    IPH_CHKSUM_SET(qiph, 0);
-//    IPH_CHKSUM_SET(qiph, inet_chksum(qiph, ip_hlen));
+    if (rx_crc != esp_crc32_le(0, payload, hdr->length))
+        return ESP_FAIL;
 
-//    /* ===== send via Wi-Fi STA ===== */
-//    ip4_output_if(q,
-//                  &dst,          /* src for TX */
-//                  &src,          /* dest for TX */
-//                  IPH_TTL(qiph),
-//                  IPH_TOS(qiph),
-//                  IP_PROTO_ICMP,
-//                  netif_default);
+    memcpy(out_buf, payload, hdr->length);
+    *out_len = hdr->length;
 
-//    pbuf_free(q);
+    return ESP_OK;
+}
 
-//    ESP_LOGI(TAG, "ICMP echo reply sent");
-//}
+/**
+ * @brief SPI -> lwIP RX task
+ */
+static void spi_rx_task(void *arg)
+{
+    (void)arg;
+
+    uint8_t buf[SPI_MTU];
+    size_t len;
+
+    ip_addr_t dest;
+    IP_ADDR4(&dest, 0,0,0,0); /* IPv4 wildcard */
+
+    while (1) {
+        if (spi_recv_ip(buf, sizeof(buf), &len) == ESP_OK) {
+//            struct pbuf *p = pbuf_alloc(PBUF_RAW, len, PBUF_POOL);
+//            if (p) {
+//                pbuf_take(p, buf, len);
+//                raw_sendto(raw_pcb_ip, p, &dest);
+//                pbuf_free(p);
+//            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+
+}
+
+
+/* ===================== ONLY FOR DEBUG (ICMP replay's simulator)  ===================== */
 
 static void icmp_echo_reply(struct pbuf *p)
 {
@@ -147,6 +228,7 @@ static void icmp_echo_reply(struct pbuf *p)
     ESP_LOGI(TAG, "ICMP echo reply sent (correct)");
 }
 
+/* ===================== L3 + TCP LOGGER ===================== */
 
 static void log_l3_tcp(struct pbuf *p)
 {
@@ -195,8 +277,6 @@ static void log_l3_tcp(struct pbuf *p)
     }
 
 }
-
-
 
 /* ===================== VIRTUAL NETIF ===================== */
 
@@ -328,10 +408,38 @@ static void wifi_init(void)
 
 void app_main(void)
 {
-    ESP_ERROR_CHECK(nvs_flash_init());
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    spi_mutex = xSemaphoreCreateMutex();
 
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+    /* SPI slave init */
+    spi_bus_config_t buscfg = {
+        .mosi_io_num = 13,   // MOSI pin ESP32 (Master MISO)
+        .miso_io_num = 12,   // MISO pin ESP32 (Master MOSI)
+        .sclk_io_num = 14,   // SCLK
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = SPI_MTU + sizeof(spi_ip_hdr_t) + 4,
+    };
+
+    spi_slave_interface_config_t slvcfg = {
+        .mode = 0,
+        .spics_io_num = 15,  // CS
+        .queue_size = 3,
+        .flags = 0,
+    };
+
+    esp_log_level_set("spi_slave", ESP_LOG_NONE);
+
+    ESP_ERROR_CHECK(spi_slave_initialize(SPI_HOST, &buscfg, &slvcfg, 0));
 
     wifi_init();
 
@@ -355,4 +463,12 @@ void app_main(void)
             netif_default->num,
             ip ? ip4addr_ntoa(ip) : "none");
     }
+
+    xTaskCreate(spi_rx_task,
+                "spi_rx_task",
+                4096,
+                NULL,
+                3,
+                NULL);
+
 }
