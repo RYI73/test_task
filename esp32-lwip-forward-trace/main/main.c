@@ -23,6 +23,9 @@
 #include "lwip/prot/tcp.h"
 #include "freertos/event_groups.h"
 
+#include "lwip/icmp.h"
+#include "lwip/inet_chksum.h"
+
 #define WIFI_GOT_IP_BIT BIT0
 
 #define WIFI_SSID "Linksys00283"
@@ -31,7 +34,119 @@
 static const char *TAG = "ROUTER";
 static EventGroupHandle_t wifi_event_group;
 
+static void dump_bytes(const uint8_t *buf, int len)
+{
+    for (int i = 0; i < len && i < 128; i += 16) {
+        char line[96];
+        int n = snprintf(line, sizeof(line), "%04x: ", i);
+        for (int j = 0; j < 16 && i + j < len; j++) {
+            n += snprintf(line + n, sizeof(line) - n,
+                          "%02x ", buf[i + j]);
+        }
+        ESP_LOGI("DUMP", "%s", line);
+    }
+}
+
 /* ===================== L3 + TCP LOGGER ===================== */
+
+//static void icmp_echo_reply(struct pbuf *p)
+//{
+//    struct ip_hdr *iph = (struct ip_hdr *)p->payload;
+
+//    if (IPH_PROTO(iph) != IP_PROTO_ICMP) return;
+
+//    uint16_t ip_hlen = IPH_HL_BYTES(iph);
+//    if (p->len < ip_hlen + sizeof(struct icmp_echo_hdr)) return;
+
+//    struct icmp_echo_hdr *icmp =
+//        (struct icmp_echo_hdr *)((uint8_t *)iph + ip_hlen);
+
+//    if (icmp->type != ICMP_ECHO) return;
+
+//    struct pbuf *q = pbuf_alloc(PBUF_IP, p->tot_len, PBUF_RAM);
+//    if (!q) return;
+
+//    pbuf_copy(q, p);
+
+//    struct ip_hdr *qiph = (struct ip_hdr *)q->payload;
+//    struct icmp_echo_hdr *qicmp =
+//        (struct icmp_echo_hdr *)((uint8_t *)qiph + ip_hlen);
+
+//    /* ===== copy IPs out of packed header ===== */
+//    ip4_addr_t src, dst;
+//    ip4_addr_copy(src, qiph->src);
+//    ip4_addr_copy(dst, qiph->dest);
+
+//    /* ===== swap IPs in packet ===== */
+//    ip4_addr_copy(qiph->src, dst);
+//    ip4_addr_copy(qiph->dest, src);
+
+//    /* ===== ICMP Echo Reply ===== */
+//    qicmp->type = ICMP_ER;
+//    qicmp->chksum = 0;
+//    qicmp->chksum = inet_chksum(qicmp, q->tot_len - ip_hlen);
+
+//    /* ===== IP checksum ===== */
+//    IPH_CHKSUM_SET(qiph, 0);
+//    IPH_CHKSUM_SET(qiph, inet_chksum(qiph, ip_hlen));
+
+//    /* ===== send via Wi-Fi STA ===== */
+//    ip4_output_if(q,
+//                  &dst,          /* src for TX */
+//                  &src,          /* dest for TX */
+//                  IPH_TTL(qiph),
+//                  IPH_TOS(qiph),
+//                  IP_PROTO_ICMP,
+//                  netif_default);
+
+//    pbuf_free(q);
+
+//    ESP_LOGI(TAG, "ICMP echo reply sent");
+//}
+
+static void icmp_echo_reply(struct pbuf *p)
+{
+    struct ip_hdr *iph = (struct ip_hdr *)p->payload;
+    uint16_t ip_hlen = IPH_HL_BYTES(iph);
+
+    struct icmp_echo_hdr *icmp =
+        (struct icmp_echo_hdr *)((uint8_t *)iph + ip_hlen);
+
+    if (icmp->type != ICMP_ECHO) return;
+
+    uint16_t icmp_len = p->tot_len - ip_hlen;
+
+    /* allocate TRANSPORT level pbuf */
+    struct pbuf *q = pbuf_alloc(PBUF_TRANSPORT, icmp_len, PBUF_RAM);
+    if (!q) return;
+
+    memcpy(q->payload, icmp, icmp_len);
+
+    struct icmp_echo_hdr *qicmp =
+        (struct icmp_echo_hdr *)q->payload;
+
+    qicmp->type = ICMP_ER;
+    qicmp->chksum = 0;
+    qicmp->chksum = inet_chksum(qicmp, icmp_len);
+
+    /* extract IPs safely */
+    ip4_addr_t src, dst;
+    ip4_addr_copy(src, iph->dest);  // reply src
+    ip4_addr_copy(dst, iph->src);   // reply dst
+
+    ip4_output_if(q,
+                  &src,
+                  &dst,
+                  IPH_TTL(iph),
+                  IPH_TOS(iph),
+                  IP_PROTO_ICMP,
+                  netif_default);
+
+    pbuf_free(q);
+
+    ESP_LOGI(TAG, "ICMP echo reply sent (correct)");
+}
+
 
 static void log_l3_tcp(struct pbuf *p)
 {
@@ -39,6 +154,8 @@ static void log_l3_tcp(struct pbuf *p)
 
     struct ip_hdr *iph = (struct ip_hdr *)p->payload;
     if (IPH_V(iph) != 4) return;
+
+    dump_bytes(p->payload, p->len);
 
     uint32_t src = ip4_addr_get_u32(&iph->src);
     uint32_t dst = ip4_addr_get_u32(&iph->dest);
@@ -73,7 +190,13 @@ static void log_l3_tcp(struct pbuf *p)
             lwip_ntohl(tcph->ackno)
         );
     }
+    else if (IPH_PROTO(iph) == IP_PROTO_ICMP) {
+        icmp_echo_reply(p);
+    }
+
 }
+
+
 
 /* ===================== VIRTUAL NETIF ===================== */
 
