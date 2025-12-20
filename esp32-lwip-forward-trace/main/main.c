@@ -19,8 +19,8 @@
  * CONFIG
  * ===================================================== */
 
-#define WIFI_STA_SSID "YOUR_STA_SSID"
-#define WIFI_STA_PASS "YOUR_STA_PASS"
+#define WIFI_STA_SSID "Linksys00283"
+#define WIFI_STA_PASS "@Valovyi_Ruslan1973"
 
 #define SPI_NETIF_MTU 1400
 
@@ -36,6 +36,7 @@ static struct netif spi_netif;
 static err_t spi_linkoutput(struct netif *netif, struct pbuf *p)
 {
     LWIP_UNUSED_ARG(netif);
+    ESP_LOGI(TAG, "spi_linkoutput()");
 
     if (!p || p->len < sizeof(struct ip_hdr)) {
         return ERR_OK;
@@ -95,7 +96,7 @@ static void spi_netif_create(void)
 {
     ip4_addr_t ip, mask, gw;
 
-    IP4_ADDR(&ip,   10, 10, 0, 1);
+    IP4_ADDR(&ip,   10, 0, 0, 1);
     IP4_ADDR(&mask, 255,255,255,0);
     IP4_ADDR(&gw,   0, 0, 0, 0);
 
