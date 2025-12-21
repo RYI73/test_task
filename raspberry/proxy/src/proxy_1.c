@@ -28,7 +28,7 @@
 #define SPI_DEVICE "/dev/spidev0.0"
 #define SPI_MODE 0
 #define SPI_BITS 8
-#define SPI_SPEED 1000000      /**< SPI speed in Hz */
+#define SPI_SPEED 100000      /**< SPI speed in Hz */
 #define MAX_PKT_SIZE 1500      /**< Maximum packet size for SPI transfer */
 #define SPI_MAGIC 0x49504657   /**< Magic constant ('IPFW') for SPI framing */
 
@@ -195,7 +195,6 @@ int tun_add_ip(const char *ifname, const char *ip_str) {
  * @param device SPI device path
  * @return SPI file descriptor or -1 on error
  */
-#if 0
 int spi_init(const char *device) {
     int spi_fd = open(device, O_RDWR);
     if (spi_fd < 0) {
@@ -217,26 +216,7 @@ int spi_init(const char *device) {
 
     return spi_fd;
 }
-#else
-static int spi_init(const char *device)
-{
-    int fd = open(device, O_RDWR);
-    if (fd < 0) {
-        perror("open spidev");
-        return -1;
-    }
 
-    uint8_t mode = 0;
-    uint8_t bits = 8;
-    uint32_t speed = SPI_SPEED;
-
-    ioctl(fd, SPI_IOC_WR_MODE, &mode);
-    ioctl(fd, SPI_IOC_WR_BITS_PER_WORD, &bits);
-    ioctl(fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed);
-
-    return fd;
-}
-#endif
 /**
  * @brief Perform full-duplex SPI transfer
  *
@@ -382,29 +362,6 @@ int spi_receive_packet(int spi_fd, uint8_t *data)
     return pkt_len;
 }
 
-static void spi_read_packet(int fd, uint8_t *rx)
-{
-#define PKT_LEN 32
-
-    uint8_t tx[PKT_LEN] = {0};
-//    uint8_t rx[PKT_LEN];
-
-    struct spi_ioc_transfer t = {
-        .tx_buf = (unsigned long)tx,
-        .rx_buf = (unsigned long)rx,
-        .len = PKT_LEN,
-        .speed_hz = SPI_SPEED,
-        .bits_per_word = 8,
-    };
-
-    ioctl(fd, SPI_IOC_MESSAGE(1), &t);
-
-//    printf("MASTER received: ");
-//    for (int i = 0; i < PKT_LEN; i++)
-//        printf("%02x ", rx[i]);
-//    printf("\n");
-}
-
 void spi_receive(int spi_fd) {
     uint8_t tx_buf[MAX_PKT_SIZE + sizeof(spi_ip_hdr_t) + 4] = {0};
     uint8_t rx_buf[MAX_PKT_SIZE + sizeof(spi_ip_hdr_t) + 4];
@@ -432,13 +389,13 @@ void spi_receive(int spi_fd) {
     //        return;
     //    }
 
-//    size_t zero_count = 0;
-//    for (ssize_t i = 0; i < n; i++) {
-//        if (rx_buf[i] == 0) zero_count++;
-//    }
-//    if (zero_count * 10 > (size_t)n * 9) {
-//        return;
-//    }
+    size_t zero_count = 0;
+    for (ssize_t i = 0; i < n; i++) {
+        if (rx_buf[i] == 0) zero_count++;
+    }
+    if (zero_count * 10 > (size_t)n * 9) {
+        return;
+    }
 
     printf("Received valid SPI packet (%d bytes):\n", n);
     for (int i = 0; i < 32; i++) {
@@ -499,30 +456,6 @@ void forward_loop(int tun_fd, int spi_fd) {
 
         usleep(1000);
     }
-}
-
-static void spi_write_packet(int fd, uint8_t base)
-{
-    uint8_t tx[PKT_LEN];
-    uint8_t rx[PKT_LEN] = {0};
-
-    for (int i = 0; i < PKT_LEN; i++)
-        tx[i] = base + i;
-
-    struct spi_ioc_transfer t = {
-        .tx_buf = (unsigned long)tx,
-        .rx_buf = (unsigned long)rx,
-        .len = PKT_LEN,
-        .speed_hz = SPI_SPEED,
-        .bits_per_word = 8,
-    };
-
-    ioctl(fd, SPI_IOC_MESSAGE(1), &t);
-
-    printf("MASTER sent: ");
-    for (int i = 0; i < PKT_LEN; i++)
-        printf("%02x ", tx[i]);
-    printf("\n");
 }
 
 void spi_send_incremental(int spi_fd) {
@@ -611,26 +544,11 @@ int main() {
     system("sudo sysctl -w net.ipv6.conf.tun0.disable_ipv6=1");
 
     // [DEBUG] Test ICMP ONLY FOR DEBUG!!!
-    for (int i = 0; i < 3; i++) {
-        spi_write_packet(spi_fd, i * 0x70);
-        usleep(2000);
-    }
-    uint8_t rx[5][PKT_LEN];
-    for (int i = 0; i < 5; i++) {
-        spi_read_packet(spi_fd, rx[i]);
-        usleep(2000);
-    }
-
-    for (int i = 0; i < 5; i++) {
-        printf("MASTER received [%d]: ", i);
-        for (int c = 0; c < PKT_LEN; c++)
-            printf("%02x ", rx[i][c]);
-        printf("\n");
-    }
-
+    test_icmp(tun_fd);
+    spi_send_incremental(spi_fd);
     // [DEBUG] End
 
-//    forward_loop(tun_fd, spi_fd);
+    forward_loop(tun_fd, spi_fd);
 
     close(spi_fd);
     close(tun_fd);
