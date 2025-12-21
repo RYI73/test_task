@@ -28,7 +28,7 @@
 #define SPI_DEVICE "/dev/spidev0.0"
 #define SPI_MODE 0
 #define SPI_BITS 8
-#define SPI_SPEED 1000000      /**< SPI speed in Hz */
+#define SPI_SPEED 100000      /**< SPI speed in Hz */
 #define MAX_PKT_SIZE 1500      /**< Maximum packet size for SPI transfer */
 #define SPI_MAGIC 0x49504657   /**< Magic constant ('IPFW') for SPI framing */
 
@@ -250,9 +250,29 @@ ssize_t spi_transfer(int spi_fd, uint8_t *tx_buf, uint8_t *rx_buf, size_t len) {
  * @param buf Buffer to store packet
  * @return Number of bytes read, or -1 on error
  */
-ssize_t read_tun_packet(int tun_fd, uint8_t *buf) {
+//ssize_t read_tun_packet(int tun_fd, uint8_t *buf) {
+//    ssize_t n = read(tun_fd, buf, MAX_PKT_SIZE);
+//    if (n < 0 && errno != EAGAIN) perror("read tun");
+//    return n;
+//}
+
+ssize_t read_tun_packet(int tun_fd, uint8_t *buf)
+{
+    static int nonblock_set = 0;
+    if (!nonblock_set) {
+        int flags = fcntl(tun_fd, F_GETFL, 0);
+        fcntl(tun_fd, F_SETFL, flags | O_NONBLOCK);
+        nonblock_set = 1;
+    }
+
     ssize_t n = read(tun_fd, buf, MAX_PKT_SIZE);
-    if (n < 0 && errno != EAGAIN) perror("read tun");
+    if (n < 0) {
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            perror("read tun");
+        }
+
+        return 0;
+    }
     return n;
 }
 
@@ -307,9 +327,23 @@ int spi_send_packet(int spi_fd, uint8_t *data, uint16_t len) {
  * @param data Buffer to store received packet
  * @return Number of bytes received, or -1 on error
  */
-int spi_receive_packet(int spi_fd, uint8_t *data) {
+int spi_receive_packet(int spi_fd, uint8_t *data)
+{
+    size_t sz_i = 0;
     uint8_t buf[sizeof(spi_ip_hdr_t) + MAX_PKT_SIZE + sizeof(uint32_t)];
-    if (spi_transfer(spi_fd, NULL, buf, sizeof(buf)) < 0) return -1;
+    sz_i = spi_transfer(spi_fd, NULL, buf, sizeof(buf));
+    if (sz_i < 0) {
+        return -1;
+    }
+
+    // [DEBUG] Dump packet ONLY FOR DEBUG!!!
+    printf("Received %zd bytes from TUN (IPv4)\n", sz_i);
+    for (ssize_t i = 0; i < sz_i; i++) {
+        if (i % 16 == 0) printf("\n%04zx: ", i);
+        printf("%02x ", buf[i]);
+    }
+    printf("\n");
+    // [DEBUG] End
 
     spi_ip_hdr_t *hdr = (spi_ip_hdr_t *)buf;
     if (ntohl(hdr->magic) != SPI_MAGIC) return -1;
@@ -328,6 +362,49 @@ int spi_receive_packet(int spi_fd, uint8_t *data) {
     return pkt_len;
 }
 
+void spi_receive(int spi_fd) {
+    uint8_t tx_buf[MAX_PKT_SIZE + sizeof(spi_ip_hdr_t) + 4] = {0};
+    uint8_t rx_buf[MAX_PKT_SIZE + sizeof(spi_ip_hdr_t) + 4];
+
+    ssize_t n = spi_transfer(spi_fd, tx_buf, rx_buf, sizeof(rx_buf));
+    if (n < (ssize_t)sizeof(spi_ip_hdr_t)) {
+        return;
+    }
+
+    //    spi_ip_hdr_t *hdr = (spi_ip_hdr_t *)rx_buf;
+    //    uint32_t magic = ntohl(hdr->magic);
+    //    if (magic != SPI_MAGIC) {
+    //        return;
+    //    }
+
+    //    uint16_t pkt_len = ntohs(hdr->length);
+    //    if (pkt_len == 0 || pkt_len > MAX_PKT_SIZE) {
+    //        return;
+    //    }
+
+    //    uint8_t *payload = rx_buf + sizeof(spi_ip_hdr_t);
+    //    uint32_t recv_crc;
+    //    memcpy(&recv_crc, payload + pkt_len, sizeof(recv_crc));
+    //    if (ntohl(recv_crc) != crc32(0, payload, pkt_len)) {
+    //        return;
+    //    }
+
+    size_t zero_count = 0;
+    for (ssize_t i = 0; i < n; i++) {
+        if (rx_buf[i] == 0) zero_count++;
+    }
+    if (zero_count * 10 > (size_t)n * 9) {
+        return;
+    }
+
+    printf("Received valid SPI packet (%d bytes):\n", n);
+    for (int i = 0; i < 32; i++) {
+        if (i % 16 == 0) printf("\n%04x: ", i);
+        printf("%02x ", rx_buf[i]);
+    }
+    printf("\n");
+}
+
 /**
  * @brief Forward packets between TUN and SPI, ignore IPv6
  *
@@ -343,21 +420,17 @@ void forward_loop(int tun_fd, int spi_fd) {
         if (n > 0) {
             uint8_t ip_version = tun_buf[0] >> 4;
             if (ip_version == 4) {
+                // [DEBUG] Dump packet ONLY FOR DEBUG!!!
                 printf("Received %zd bytes from TUN (IPv4)\n", n);
-
-                // Dump packet
                 for (ssize_t i = 0; i < n; i++) {
                     if (i % 16 == 0) printf("\n%04zx: ", i);
                     printf("%02x ", tun_buf[i]);
                 }
                 printf("\n");
-
-                // Simple ICMP Echo Reply check
                 if (n >= 21 && tun_buf[20] == 0) {
                     printf("This is ICMP Echo Reply\n");
-                } else {
-                    printf("Not an ICMP Echo Reply\n");
                 }
+                // [DEBUG] End
 
                 // Forward to SPI
                 spi_send_packet(spi_fd, tun_buf, n);
@@ -369,16 +442,52 @@ void forward_loop(int tun_fd, int spi_fd) {
             }
         }
 
-        int rcv_len = spi_receive_packet(spi_fd, spi_buf);
-        if (rcv_len > 0) {
-            uint8_t ip_version = spi_buf[0] >> 4;
-            if (ip_version == 4) {
-                write_tun_packet(tun_fd, spi_buf, rcv_len);
-            }
-        }
+//        int rcv_len = spi_receive_packet(spi_fd, spi_buf);
+//        if (rcv_len > 0) {
+//            uint8_t ip_version = spi_buf[0] >> 4;
+//            if (ip_version == 4) {
+//                write_tun_packet(tun_fd, spi_buf, rcv_len);
+//            }
+//        }
 
-        usleep(10000);
+        static uint8_t cntr = 0;
+        printf("%u\n", cntr++);
+        spi_receive(spi_fd);
+
+        usleep(1000);
     }
+}
+
+void spi_send_incremental(int spi_fd) {
+    #define BUF_LEN 32
+    uint8_t tx_buf[BUF_LEN];
+    uint8_t rx_buf[BUF_LEN];
+
+    // Заповнюємо буфер значеннями від 0 до 31
+    for (int i = 0; i < BUF_LEN; i++) {
+        tx_buf[i] = i;
+    }
+
+    struct spi_ioc_transfer tr = {
+        .tx_buf = (unsigned long)tx_buf,
+        .rx_buf = (unsigned long)rx_buf, // можемо ігнорувати отримане
+        .len = BUF_LEN,
+        .speed_hz = SPI_SPEED,
+        .bits_per_word = SPI_BITS,
+    };
+
+    int ret = ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr);
+    if (ret < 1) {
+        perror("spi transfer");
+        return;
+    }
+
+    printf("Sent 32 incremental bytes:\n");
+    for (int i = 0; i < BUF_LEN; i++) {
+        printf("%02x ", tx_buf[i]);
+        if ((i + 1) % 16 == 0) printf("\n");
+    }
+    printf("\n");
 }
 
 /**
@@ -426,14 +535,17 @@ int main() {
     system("sudo sysctl -w net.ipv4.conf.all.rp_filter=0");
     system("sudo sysctl -w net.ipv4.conf.tun0.rp_filter=0");
 
-    // Add route to external host (example: 192.168.1.119) via tun0
-    system("sudo ip route add 192.168.1.119/32 dev tun0");
+    // Policy routing: all packets with src=10.0.0.2 go via tun0
+    system("sudo ip rule add from 10.0.0.2/32 table 100");
+    system("sudo ip route add default dev tun0 table 100");
+    system("sudo ip route flush cache");
 
     // Disable IPv6 on tun0
     system("sudo sysctl -w net.ipv6.conf.tun0.disable_ipv6=1");
 
     // [DEBUG] Test ICMP ONLY FOR DEBUG!!!
     test_icmp(tun_fd);
+    spi_send_incremental(spi_fd);
     // [DEBUG] End
 
     forward_loop(tun_fd, spi_fd);

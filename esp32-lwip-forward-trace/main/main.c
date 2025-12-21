@@ -120,7 +120,7 @@ static esp_err_t spi_send_ip(const uint8_t *data, size_t len)
         ESP_LOGI(TAG, "sent OK");
     }
     else {
-        ESP_LOGI(TAG, "not sent");
+        ESP_LOGI(TAG, "not sent, ret %d", ret);
     }
 
     return ret;
@@ -145,7 +145,11 @@ static esp_err_t spi_recv_ip(uint8_t *out_buf, size_t max_len, size_t *out_len)
 
     esp_err_t ret = spi_slave_transmit(SPI_HOST, &t, pdMS_TO_TICKS(50));
 //    esp_err_t ret = spi_slave_transmit(SPI_HOST, &t, 0);
-    if (ret != ESP_OK) return ret;
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    dump_bytes(spi_rx_buf, 32);
 
     spi_ip_hdr_t *hdr = (spi_ip_hdr_t *)spi_rx_buf;
     if (hdr->magic != SPI_MAGIC || hdr->version != SPI_PROTO_VERSION)
@@ -237,12 +241,6 @@ static void spi_rx_task(void *arg)
     while (1) {
         if (spi_recv_ip(buf, sizeof(buf), &len) == ESP_OK) {
             spi_ipv4_input(buf, len);
-//            struct pbuf *p = pbuf_alloc(PBUF_RAW, len, PBUF_POOL);
-//            if (p) {
-//                pbuf_take(p, buf, len);
-//                raw_sendto(raw_pcb_ip, p, &dest);
-//                pbuf_free(p);
-//            }
         }
         vTaskDelay(pdMS_TO_TICKS(5));
     }
@@ -297,7 +295,7 @@ static void icmp_echo_reply(struct pbuf *p)
 
 /* ===================== L3 + TCP LOGGER ===================== */
 
-static void log_l3_tcp(struct pbuf *p)
+void log_l3_tcp(struct pbuf *p)
 {
     if (p->len < sizeof(struct ip_hdr)) return;
 
@@ -351,8 +349,8 @@ static err_t virtual_netif_output(struct netif *netif,
                                   struct pbuf *p,
                                   const ip4_addr_t *ipaddr)
 {
-    log_l3_tcp(p);
-//    spi_send_ip(p->payload, p->len);
+//    log_l3_tcp(p);
+    spi_send_ip(p->payload, p->len);
 
     return ERR_OK; // sink
 }
@@ -394,18 +392,6 @@ static void virtual_netif_init(void)
     ESP_LOGI(TAG, "Virtual netif UP: 10.0.0.1/24");
 }
 
-static void on_got_ip(void *arg,
-                      esp_event_base_t event_base,
-                      int32_t event_id,
-                      void *event_data)
-{
-    ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-    esp_netif_ip_info_t *ip = &event->ip_info;
-
-    ESP_LOGI(TAG, "ESP32 STA IP: " IPSTR, IP2STR(&ip->ip));
-    ESP_LOGI(TAG, "GW: " IPSTR, IP2STR(&ip->gw));
-    ESP_LOGI(TAG, "NETMASK: " IPSTR, IP2STR(&ip->netmask));
-}
 /* ===================== WIFI STA ===================== */
 
 static void wifi_event_handler(void *arg,
