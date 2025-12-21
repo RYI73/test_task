@@ -101,6 +101,8 @@ static esp_err_t spi_send_ip(const uint8_t *data, size_t len)
     memcpy(&spi_tx_buf[off], data, len);         off += len;
     memcpy(&spi_tx_buf[off], &crc, sizeof(crc)); off += sizeof(crc);
 
+    dump_bytes(spi_tx_buf, off);
+
     spi_slave_transaction_t t = {
         .length    = off * 8,
         .tx_buffer = spi_tx_buf,
@@ -110,6 +112,13 @@ static esp_err_t spi_send_ip(const uint8_t *data, size_t len)
     xSemaphoreTake(spi_mutex, portMAX_DELAY);
     esp_err_t ret = spi_slave_transmit(SPI_HOST, &t, pdMS_TO_TICKS(50));
     xSemaphoreGive(spi_mutex);
+
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "sent OK");
+    }
+    else {
+        ESP_LOGI(TAG, "not sent");
+    }
 
     return ret;
 }
@@ -237,7 +246,7 @@ static void log_l3_tcp(struct pbuf *p)
     struct ip_hdr *iph = (struct ip_hdr *)p->payload;
     if (IPH_V(iph) != 4) return;
 
-    dump_bytes(p->payload, p->len);
+//    dump_bytes(p->payload, p->len);
 
     uint32_t src = ip4_addr_get_u32(&iph->src);
     uint32_t dst = ip4_addr_get_u32(&iph->dest);
@@ -287,6 +296,8 @@ static err_t virtual_netif_output(struct netif *netif,
                                   const ip4_addr_t *ipaddr)
 {
     log_l3_tcp(p);
+//    spi_send_ip(p->payload, p->len);
+
     return ERR_OK; // sink
 }
 
@@ -402,6 +413,7 @@ static void wifi_init(void)
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg));
     ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 }
 
 /* ===================== APP MAIN ===================== */
