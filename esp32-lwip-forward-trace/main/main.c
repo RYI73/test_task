@@ -31,6 +31,7 @@
 
 #include "lwip/icmp.h"
 #include "lwip/inet_chksum.h"
+#include "lwip/tcpip.h"
 
 #define WIFI_GOT_IP_BIT BIT0
 
@@ -331,7 +332,7 @@ static void virtual_netif_init(void)
               &ip, &netmask, &gw,
               NULL,
               virtual_netif_netif_init,
-              ip4_input);
+              tcpip_input);
 
     vnetif.flags |= NETIF_FLAG_UP | NETIF_FLAG_LINK_UP;
 
