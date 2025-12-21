@@ -31,6 +31,12 @@
 #define SPI_SPEED 1000000      /**< SPI speed in Hz */
 #define MAX_PKT_SIZE 1500      /**< Maximum packet size for SPI transfer */
 #define SPI_MAGIC 0x49504657   /**< Magic constant ('IPFW') for SPI framing */
+#define PKT_LEN 128
+
+#define SPI_CHUNK_SIZE 32
+#define SPI_CHUNK_PAYLOAD_SIZE 28
+#define SPI_CHUNK_MAGIC 0xA5
+
 
 /**
  * @struct spi_ip_hdr_t
@@ -246,22 +252,200 @@ static int spi_init(const char *device)
  * @param len Number of bytes to transfer
  * @return Number of bytes transferred, or -1 on error
  */
-ssize_t spi_transfer(int spi_fd, uint8_t *tx_buf, uint8_t *rx_buf, size_t len) {
-    struct spi_ioc_transfer tr = {
-        .tx_buf = (unsigned long)tx_buf,
-        .rx_buf = (unsigned long)rx_buf,
-        .len = len,
+//ssize_t spi_transfer(int spi_fd, uint8_t *tx_buf, uint8_t *rx_buf, size_t len) {
+//    struct spi_ioc_transfer tr = {
+//        .tx_buf = (unsigned long)tx_buf,
+//        .rx_buf = (unsigned long)rx_buf,
+//        .len = len,
+//        .speed_hz = SPI_SPEED,
+//        .bits_per_word = SPI_BITS,
+//    };
+//    printf("MASTER sent %d byte\ns", len);
+
+//    int ret = ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr);
+//    if (ret < 1) {
+//        perror("ERROR of spi transfer");
+//        return -1;
+//    }
+//    return ret;
+//}
+ssize_t spi_transfer(int spi_fd,
+                     uint8_t *tx_buf,
+                     uint8_t *rx_buf,
+                     size_t len)
+{
+    size_t offset = 0;
+    ssize_t total = 0;
+
+    while (offset < len) {
+        size_t chunk = len - offset;
+        if (chunk > SPI_CHUNK_SIZE)
+            chunk = SPI_CHUNK_SIZE;
+
+        struct spi_ioc_transfer tr = {
+            .tx_buf = tx_buf ? (unsigned long)(tx_buf + offset) : 0,
+            .rx_buf = rx_buf ? (unsigned long)(rx_buf + offset) : 0,
+            .len = chunk,
+            .speed_hz = SPI_SPEED,
+            .bits_per_word = SPI_BITS,
+            .delay_usecs = 0,
+            .cs_change = 0,
+        };
+
+        int ret = ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr);
+        if (ret < 1) {
+            perror("spi_transfer chunk failed");
+            return -1;
+        }
+
+        offset += chunk;
+        total  += chunk;
+
+        usleep(5);
+    }
+
+    return total;
+}
+
+int spi_send_transfer(int spi_fd, const uint8_t *data, size_t len)
+{
+    uint8_t tx[SPI_CHUNK_SIZE] = {0};
+    uint8_t rx[SPI_CHUNK_SIZE] = {0};
+
+    // [DEBUG] Dump packet ONLY FOR DEBUG!!!
+    printf("Send %zd bytes to SPI:\n", len);
+    for (ssize_t i = 0; i < len; i++) {
+        if (i % 16 == 0) printf("\n%04zx: ", i);
+        printf("%02x ", data[i]);
+    }
+    printf("\n");
+    // [DEBUG] End
+
+    uint8_t total_chunks = (len + SPI_CHUNK_PAYLOAD_SIZE - 1) / SPI_CHUNK_PAYLOAD_SIZE;
+    size_t offset = 0;
+
+    for (uint8_t seq = 0; seq < total_chunks; seq++) {
+        size_t chunk_len = len - offset;
+        if (chunk_len > SPI_CHUNK_PAYLOAD_SIZE)
+            chunk_len = SPI_CHUNK_PAYLOAD_SIZE;
+
+        memset(tx, 0, sizeof(tx));
+        tx[0] = SPI_CHUNK_MAGIC;
+        tx[1] = seq;
+        tx[2] = total_chunks;
+        tx[3] = chunk_len;
+        memcpy(&tx[4], data + offset, chunk_len);
+
+        struct spi_ioc_transfer tr = {
+            .tx_buf = (unsigned long)tx,
+            .rx_buf = (unsigned long)rx,
+            .len = SPI_CHUNK_SIZE,
+            .speed_hz = SPI_SPEED,
+            .bits_per_word = 8,
+        };
+
+        if (ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr) < 1) {
+            perror("spi send");
+            return -1;
+        }
+
+        // [DEBUG] Dump packet ONLY FOR DEBUG!!!
+        printf("Send %zd chunk:\n", seq);
+        for (ssize_t i = 0; i < SPI_CHUNK_SIZE; i++) {
+            if (i % 16 == 0) printf("\n%04zx: ", i);
+            printf("%02x ", tx[i]);
+        }
+        printf("\n");
+        // [DEBUG] End
+
+        offset += chunk_len;
+        usleep(1000);   // 1 ms — критично для slave
+    }
+
+    return 0;
+}
+
+int spi_recv_transfer(int spi_fd, uint8_t *out, size_t *out_len)
+{
+    uint8_t tx[SPI_CHUNK_SIZE] = {0};   // master завжди щось тактує
+    uint8_t rx[SPI_CHUNK_SIZE];
+
+    size_t offset = 0;
+    uint8_t expected_chunks = 0;
+    uint8_t received_chunks = 0;
+
+    while (1) {
+        struct spi_ioc_transfer tr = {
+            .tx_buf = (unsigned long)tx,
+            .rx_buf = (unsigned long)rx,
+            .len = SPI_CHUNK_SIZE,
+            .speed_hz = SPI_SPEED,
+            .bits_per_word = 8,
+        };
+
+        if (ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr) < 1) {
+            perror("spi recv");
+            return -1;
+        }
+
+        if (rx[0] != SPI_MAGIC) {
+            usleep(1000);
+            continue;
+        }
+
+        uint8_t seq          = rx[1];
+        uint8_t total_chunks = rx[2];
+        uint8_t payload_len  = rx[3];
+
+        if (payload_len > SPI_CHUNK_PAYLOAD_SIZE)
+            return -1;
+
+        if (seq == 0) {
+            offset = 0;
+            received_chunks = 0;
+            expected_chunks = total_chunks;
+        }
+
+        if (seq != received_chunks)
+            return -1;
+
+        memcpy(out + offset, &rx[4], payload_len);
+        offset += payload_len;
+        received_chunks++;
+
+        if (received_chunks == expected_chunks) {
+            *out_len = offset;
+            return 0;
+        }
+
+        usleep(1000);
+    }
+}
+
+static void spi_write_packet(int fd, uint8_t base)
+{
+    uint8_t tx[32];
+    uint8_t rx[32] = {0};
+
+    for (int i = 0; i < 32; i++)
+        tx[i] = base + i;
+
+    struct spi_ioc_transfer t = {
+        .tx_buf = (unsigned long)tx,
+        .rx_buf = (unsigned long)rx,
+        .len = 32,
         .speed_hz = SPI_SPEED,
-        .bits_per_word = SPI_BITS,
+        .bits_per_word = 8,
     };
 
-    int ret = ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr);
-    if (ret < 1) {
-        perror("spi transfer");
-        return -1;
-    }
-    return ret;
+    ioctl(fd, SPI_IOC_MESSAGE(1), &t);
+
+    printf("MASTER sent: ");
+    for (int i = 0; i < 32; i++)
+        printf("%02x ", tx[i]);
+    printf("\n");
 }
+
 
 /**
  * @brief Read a packet from TUN interface
@@ -330,13 +514,24 @@ int spi_send_packet(int spi_fd, uint8_t *data, uint16_t len) {
 
     uint32_t crc = htonl(crc32(0, data, len));
 
-    uint8_t buf[sizeof(hdr) + len + sizeof(crc)];
+//    uint8_t buf[sizeof(hdr) + len + sizeof(crc)];
+    uint8_t buf[128];
     size_t offset = 0;
     memcpy(buf + offset, &hdr, sizeof(hdr)); offset += sizeof(hdr);
     memcpy(buf + offset, data, len); offset += len;
     memcpy(buf + offset, &crc, sizeof(crc));
 
-    if (spi_transfer(spi_fd, buf, NULL, sizeof(buf)) < 0) return -1;
+//    // [DEBUG] Dump packet ONLY FOR DEBUG!!!
+//    printf("Send %zd bytes to TUN:\n", offset + sizeof(crc));
+//    for (ssize_t i = 0; i < offset + sizeof(crc); i++) {
+//        if (i % 16 == 0) printf("\n%04zx: ", i);
+//        printf("%02x ", buf[i]);
+//    }
+//    printf("\n");
+//    // [DEBUG] End
+
+//    if (spi_transfer(spi_fd, buf, NULL, sizeof(buf)) < 0) return -1;
+    if (spi_send_transfer(spi_fd, buf, sizeof(buf)) < 0) return -1;
     return 0;
 }
 
@@ -384,7 +579,6 @@ int spi_receive_packet(int spi_fd, uint8_t *data)
 
 static void spi_read_packet(int fd, uint8_t *rx)
 {
-#define PKT_LEN 32
 
     uint8_t tx[PKT_LEN] = {0};
 //    uint8_t rx[PKT_LEN];
@@ -458,22 +652,23 @@ void forward_loop(int tun_fd, int spi_fd) {
     uint8_t tun_buf[MAX_PKT_SIZE];
     uint8_t spi_buf[MAX_PKT_SIZE];
 
+    int dbg_cntr = 0;
     while (1) {
         ssize_t n = read_tun_packet(tun_fd, tun_buf);
         if (n > 0) {
             uint8_t ip_version = tun_buf[0] >> 4;
             if (ip_version == 4) {
-                // [DEBUG] Dump packet ONLY FOR DEBUG!!!
-                printf("Received %zd bytes from TUN (IPv4)\n", n);
-                for (ssize_t i = 0; i < n; i++) {
-                    if (i % 16 == 0) printf("\n%04zx: ", i);
-                    printf("%02x ", tun_buf[i]);
-                }
-                printf("\n");
-                if (n >= 21 && tun_buf[20] == 0) {
-                    printf("This is ICMP Echo Reply\n");
-                }
-                // [DEBUG] End
+//                // [DEBUG] Dump packet ONLY FOR DEBUG!!!
+//                printf("Received %zd bytes from TUN (IPv4)\n", n);
+//                for (ssize_t i = 0; i < n; i++) {
+//                    if (i % 16 == 0) printf("\n%04zx: ", i);
+//                    printf("%02x ", tun_buf[i]);
+//                }
+//                printf("\n");
+//                if (n >= 21 && tun_buf[20] == 0) {
+//                    printf("This is ICMP Echo Reply\n");
+//                }
+//                // [DEBUG] End
 
                 // Forward to SPI
                 spi_send_packet(spi_fd, tun_buf, n);
@@ -495,34 +690,13 @@ void forward_loop(int tun_fd, int spi_fd) {
 
         static uint8_t cntr = 0;
         printf("%u\n", cntr++);
-        spi_receive(spi_fd);
+//        spi_receive(spi_fd);
 
+        if (dbg_cntr++ > 3) {
+          break;
+        }
         usleep(1000);
     }
-}
-
-static void spi_write_packet(int fd, uint8_t base)
-{
-    uint8_t tx[PKT_LEN];
-    uint8_t rx[PKT_LEN] = {0};
-
-    for (int i = 0; i < PKT_LEN; i++)
-        tx[i] = base + i;
-
-    struct spi_ioc_transfer t = {
-        .tx_buf = (unsigned long)tx,
-        .rx_buf = (unsigned long)rx,
-        .len = PKT_LEN,
-        .speed_hz = SPI_SPEED,
-        .bits_per_word = 8,
-    };
-
-    ioctl(fd, SPI_IOC_MESSAGE(1), &t);
-
-    printf("MASTER sent: ");
-    for (int i = 0; i < PKT_LEN; i++)
-        printf("%02x ", tx[i]);
-    printf("\n");
 }
 
 void spi_send_incremental(int spi_fd) {
@@ -611,26 +785,29 @@ int main() {
     system("sudo sysctl -w net.ipv6.conf.tun0.disable_ipv6=1");
 
     // [DEBUG] Test ICMP ONLY FOR DEBUG!!!
-    for (int i = 0; i < 3; i++) {
-        spi_write_packet(spi_fd, i * 0x70);
-        usleep(2000);
-    }
-    uint8_t rx[5][PKT_LEN];
-    for (int i = 0; i < 5; i++) {
-        spi_read_packet(spi_fd, rx[i]);
-        usleep(2000);
-    }
+//    for (int i = 0; i < 5; i++) {
+//        spi_write_packet(spi_fd, i * 0x10);
+//        usleep(100);
+//    }
+//    uint8_t rx[5][2048];
+//    for (int i = 0; i < 5; i++) {
+//        spi_read_packet(spi_fd, rx[i]);
+//        usleep(2000);
+//    }
 
-    for (int i = 0; i < 5; i++) {
-        printf("MASTER received [%d]: ", i);
-        for (int c = 0; c < PKT_LEN; c++)
-            printf("%02x ", rx[i][c]);
-        printf("\n");
-    }
+//    for (int i = 0; i < 5; i++) {
+//        printf("MASTER received [%d]: ", i);
+//        for (ssize_t c = 0; c < 128; c++) {
+//            if (c % 32 == 0) printf("\n%04zx: ", c);
+//            printf("%02x ", rx[i][c]);
+//        }
+//        printf("\n");
+//    }
 
+    test_icmp(tun_fd);
     // [DEBUG] End
 
-//    forward_loop(tun_fd, spi_fd);
+    forward_loop(tun_fd, spi_fd);
 
     close(spi_fd);
     close(tun_fd);
