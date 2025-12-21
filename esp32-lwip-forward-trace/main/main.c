@@ -61,6 +61,8 @@ static const char *TAG = "ROUTER";
 static EventGroupHandle_t wifi_event_group;
 static SemaphoreHandle_t spi_mutex;
 
+static struct netif vnetif;
+
 static void dump_bytes(const uint8_t *buf, int len)
 {
     for (int i = 0; i < len && i < 128; i += 16) {
@@ -165,6 +167,60 @@ static esp_err_t spi_recv_ip(uint8_t *out_buf, size_t max_len, size_t *out_len)
     return ESP_OK;
 }
 
+static void spi_ipv4_input(const uint8_t *buf, size_t len)
+{
+    if (len < sizeof(struct ip_hdr)) {
+        return;
+    }
+
+    struct ip_hdr *iph = (struct ip_hdr *)buf;
+
+    /* Basic IPv4 sanity */
+    if (IPH_V(iph) != 4) {
+        ESP_LOGW(TAG, "Not IPv4");
+        return;
+    }
+
+    uint16_t ip_hlen = IPH_HL_BYTES(iph);
+    if (ip_hlen < sizeof(struct ip_hdr) || ip_hlen > len) {
+        ESP_LOGW(TAG, "Bad IP header length");
+        return;
+    }
+
+    /* allocate RAW pbuf (contains full IP packet) */
+    struct pbuf *p = pbuf_alloc(PBUF_RAW, len, PBUF_RAM);
+    if (!p) {
+        return;
+    }
+
+    memcpy(p->payload, buf, len);
+
+    switch (IPH_PROTO(iph)) {
+
+    case IP_PROTO_ICMP:
+        ESP_LOGD(TAG, "ICMP packet");
+        ip4_input(p, netif_default);
+        break;
+
+    case IP_PROTO_TCP:
+        ESP_LOGD(TAG, "TCP packet");
+        ip4_input(p, netif_default);
+        break;
+
+    case IP_PROTO_UDP:
+        ESP_LOGD(TAG, "UDP packet");
+        ip4_input(p, netif_default);
+        break;
+
+    default:
+        ESP_LOGW(TAG, "Unknown L4 proto: %u", IPH_PROTO(iph));
+        pbuf_free(p);
+        return;
+    }
+
+    /* ip4_input takes ownership of pbuf */
+}
+
 /**
  * @brief SPI -> lwIP RX task
  */
@@ -180,6 +236,7 @@ static void spi_rx_task(void *arg)
 
     while (1) {
         if (spi_recv_ip(buf, sizeof(buf), &len) == ESP_OK) {
+            spi_ipv4_input(buf, len);
 //            struct pbuf *p = pbuf_alloc(PBUF_RAW, len, PBUF_POOL);
 //            if (p) {
 //                pbuf_take(p, buf, len);
@@ -289,8 +346,6 @@ static void log_l3_tcp(struct pbuf *p)
 }
 
 /* ===================== VIRTUAL NETIF ===================== */
-
-static struct netif vnetif;
 
 static err_t virtual_netif_output(struct netif *netif,
                                   struct pbuf *p,
@@ -477,11 +532,6 @@ void app_main(void)
             ip ? ip4addr_ntoa(ip) : "none");
     }
 
-    xTaskCreate(spi_rx_task,
-                "spi_rx_task",
-                4096,
-                NULL,
-                3,
-                NULL);
+    xTaskCreate(spi_rx_task, "spi_rx_task", 4096, NULL, 3, NULL);
 
 }
