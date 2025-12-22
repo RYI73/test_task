@@ -67,6 +67,7 @@ esp_err_t spi_slave_recv_packet(uint8_t *rx_packet, TickType_t timeout_ms)
     size_t total_received = 0;
     uint8_t cntr = 0;
     uint8_t try_cntr = 0;
+    uint8_t matrix[128] = {0};
 
     while (total_received < PKT_LEN) {
         spi_slave_transaction_t t = {
@@ -84,7 +85,6 @@ esp_err_t spi_slave_recv_packet(uint8_t *rx_packet, TickType_t timeout_ms)
             continue;
         }
 
-//        dump_bytes(chunk_buf, SPI_CHUNK_SIZE);
 
         if (chunk_buf[0] != SPI_CHUNK_MAGIC) {
 //            printf("SPI chunk magic mismatch: 0x%02x\n", chunk_buf[0]);
@@ -96,6 +96,9 @@ esp_err_t spi_slave_recv_packet(uint8_t *rx_packet, TickType_t timeout_ms)
         uint8_t total_chunks = chunk_buf[2];
         uint8_t chunk_len   = chunk_buf[3];
 
+        if (matrix[seq]) {
+            continue;
+        }
 
         if (chunk_len > SPI_CHUNK_PAYLOAD_SIZE) {
 //            printf("SPI chunk_len too big: %d\n", chunk_len);
@@ -112,10 +115,13 @@ esp_err_t spi_slave_recv_packet(uint8_t *rx_packet, TickType_t timeout_ms)
 
         memcpy(rx_packet + offset, &chunk_buf[4], chunk_len);
         total_received += chunk_len;
+        matrix[seq] = 1;
 
         cntr++;
-        printf("ch %u/%u\n", cntr, total_chunks);
-        if (cntr == total_chunks) {
+        printf("ch %u/%u %02X %02X\n", seq+1, total_chunks, chunk_buf[4], chunk_buf[5]);
+//        dump_bytes(&chunk_buf[4], 2);
+        if (seq+1 == total_chunks) {
+            printf("OK\n");
             break;
         }
 
@@ -225,7 +231,7 @@ void app_main(void)
     for (int i = 0; i < 3; i++) {
 //        spi_slave_receive(rx_buf[i], i == 0 ? 5000 : 50);
         size_t out_len = 0;
-        spi_slave_recv_packet(rx_buf[i], i==0 ? 5000 : 50);
+        spi_slave_recv_packet(rx_buf[i], i==0 ? 5000 : 300);
 //        vTaskDelay(pdMS_TO_TICKS(2));
     }
 
