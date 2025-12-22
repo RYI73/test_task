@@ -24,6 +24,7 @@
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <sys/time.h>
+#include <time.h>
 
 #define SPI_DEVICE "/dev/spidev0.0"
 #define SPI_MODE 0
@@ -78,6 +79,12 @@ uint32_t crc32(uint32_t crc, const uint8_t *buf, size_t len) {
             c = c & 1 ? 0xEDB88320 ^ (c >> 1) : c >> 1;
     }
     return c ^ 0xFFFFFFFF;
+}
+
+static inline int64_t timespec_to_ms(struct timespec *ts)
+{
+    return (int64_t)ts->tv_sec * 1000 +
+           ts->tv_nsec / 1000000;
 }
 
 /**
@@ -369,10 +376,20 @@ int spi_recv_transfer(int spi_fd, uint8_t *out)
     size_t offset = 0;
     uint8_t expected_chunks = 0;
     uint8_t received_chunks = 0;
-    uint8_t try_cntr = 0;
     uint8_t matrix[128] = {0};
 
+    struct timespec start, now;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
     while (1) {
+        clock_gettime(CLOCK_MONOTONIC, &now);
+
+        if (timespec_to_ms(&now) - timespec_to_ms(&start) >= 500) {
+            // timeout 500 ms
+            printf("SPI recv timeout\n");
+            break;
+        }
+
         struct spi_ioc_transfer tr = {
             .tx_buf = (unsigned long)tx,
             .rx_buf = (unsigned long)rx,
@@ -382,10 +399,6 @@ int spi_recv_transfer(int spi_fd, uint8_t *out)
         };
 
         if (ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr) < 1) {
-            if (++try_cntr == (PKT_LEN / SPI_CHUNK_SIZE) * 3) {
-                printf("SPI no data\n");
-                return -1;
-            }
             continue;
         }
 
@@ -409,8 +422,10 @@ int spi_recv_transfer(int spi_fd, uint8_t *out)
             continue;
         }
 
-        if (payload_len > SPI_CHUNK_PAYLOAD_SIZE)
-            return -1;
+        if (payload_len > SPI_CHUNK_PAYLOAD_SIZE) {
+            printf("Bad payload len %u\n", payload_len);
+            break;
+        }
 
         if (seq == 0) {
             offset = 0;
@@ -418,8 +433,10 @@ int spi_recv_transfer(int spi_fd, uint8_t *out)
             expected_chunks = total_chunks;
         }
 
-        if (seq != received_chunks)
-            return -1;
+//        if (seq != received_chunks) {
+//            printf("seq != received_chunks: %u != %u\n", seq, received_chunks);
+//            break;
+//        }
 
         memcpy(out + offset, &rx[4], payload_len);
         offset += payload_len;
@@ -431,10 +448,6 @@ int spi_recv_transfer(int spi_fd, uint8_t *out)
             return 0;
         }
 
-        if (++try_cntr == (PKT_LEN / SPI_CHUNK_SIZE) * 3) {
-            printf("SPI no data\n");
-            return -1;
-        }
         usleep(1000);
     }
 
@@ -768,7 +781,7 @@ int main() {
 
     usleep(200000);
     printf("=== TEST 2: master <- slave ===\n");
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
         uint16_t length = 0;
         static uint8_t rx[PKT_LEN];
         if (!spi_receive(spi_fd, rx, &length)) {
@@ -780,7 +793,7 @@ int main() {
             printf("\n");
         }
 
-        usleep(200000);
+        usleep(1000);
     }
 
     close(spi_fd);
