@@ -586,26 +586,26 @@ int spi_receive_packet(int spi_fd, uint8_t *data)
     return pkt_len;
 }
 
-static void spi_read_packet(int fd, uint8_t *rx)
+static void spi_read_packet(int fd)
 {
 
     uint8_t tx[PKT_LEN] = {0};
-//    uint8_t rx[PKT_LEN];
+    uint8_t rx[PKT_LEN];
 
     struct spi_ioc_transfer t = {
         .tx_buf = (unsigned long)tx,
         .rx_buf = (unsigned long)rx,
-        .len = PKT_LEN,
+        .len = SPI_CHUNK_SIZE,
         .speed_hz = SPI_SPEED,
         .bits_per_word = 8,
     };
 
     ioctl(fd, SPI_IOC_MESSAGE(1), &t);
 
-//    printf("MASTER received: ");
-//    for (int i = 0; i < PKT_LEN; i++)
-//        printf("%02x ", rx[i]);
-//    printf("\n");
+    printf("MASTER received: ");
+    for (int i = 0; i < SPI_CHUNK_SIZE; i++)
+        printf("%02x ", rx[i]);
+    printf("\n");
 }
 
 void spi_receive(int spi_fd) {
@@ -814,8 +814,9 @@ int main() {
         usleep(100000);
     }
 
-    for (int i = 0; i < 3; i++) {
-       spi_receive(spi_fd);
+    for (int i = 0; i < 10; i++) {
+       spi_read_packet(spi_fd);
+//       spi_receive(spi_fd);
        usleep(200000);
     }
 

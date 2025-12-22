@@ -43,17 +43,18 @@ static void spi_slave_init(void)
         .sclk_io_num = 14,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = PKT_LEN
+        .max_transfer_sz = SPI_CHUNK_SIZE
     };
 
     spi_slave_interface_config_t slvcfg = {
         .mode = 0,
         .spics_io_num = 15,
-        .queue_size = 5,
+        .queue_size = 3,
     };
 
     ESP_ERROR_CHECK(
-        spi_slave_initialize(SPI_HOST, &buscfg, &slvcfg, 0)
+//        spi_slave_initialize(SPI_HOST, &buscfg, &slvcfg, 0)
+        spi_slave_initialize(SPI_HOST, &buscfg, &slvcfg, SPI_DMA_CH_AUTO)
     );
 
     ESP_LOGI(TAG, "SPI slave initialized");
@@ -207,44 +208,41 @@ void spi_slave_send_packet(const uint8_t *data, size_t len)
 
 static void spi_slave_send(uint8_t base)
 {
-    for (int i = 0; i < PKT_LEN; i++)
+    for (int i = 0; i < SPI_CHUNK_SIZE; i++)
         tx_buf[i] = base + i;
 
     spi_slave_transaction_t t = {
-        .length = PKT_LEN * 8,
+        .length = SPI_CHUNK_SIZE * 8,
         .tx_buffer = tx_buf,
         .rx_buffer = NULL,
     };
 
-//    esp_err_t r =
-      spi_slave_transmit(SPI_HOST, &t, pdMS_TO_TICKS(50));
-//    if (r == ESP_OK) {
-//        ESP_LOGI(TAG, "SLAVE sent packet base=0x%02x", base);
-//    }
+    esp_err_t r =
+        spi_slave_transmit(SPI_HOST, &t, portMAX_DELAY);
+    if (r == ESP_OK) {
+        ESP_LOGI(TAG, "SLAVE sent packet base=0x%02x", base);
+    }
 }
 
 void app_main(void)
 {
     spi_slave_init();
 
-//    printf("=== TEST 1: master -> slave ===\n");
     for (int i = 0; i < 3; i++) {
-//        spi_slave_receive(rx_buf[i], i == 0 ? 5000 : 50);
-        size_t out_len = 0;
         spi_slave_recv_packet(rx_buf[i], i==0 ? 5000 : 300);
-//        vTaskDelay(pdMS_TO_TICKS(2));
     }
-
-//    printf("=== TEST 2: master <- slave ===\n");
-//    for (int i = 0; i < 3; i++) {
-//        spi_slave_send(i * 0x20);
-//        vTaskDelay(pdMS_TO_TICKS(2));
-//    }
-
     for (int i = 0; i < 3; i++) {
         ESP_LOGI(TAG, "Received [%d]:", i);
         dump_bytes(rx_buf[i], PKT_LEN);
     }
+
+//     vTaskDelay(pdMS_TO_TICKS(100000));
+    printf("=== TEST 2: master <- slave ===\n");
+    for (int i = 0; i < 3; i++) {
+        spi_slave_send(i * 0x20);
+//        vTaskDelay(pdMS_TO_TICKS(2));
+    }
+
 
     while (1) vTaskDelay(portMAX_DELAY);
 }
