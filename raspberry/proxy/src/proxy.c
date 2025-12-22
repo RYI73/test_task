@@ -265,23 +265,6 @@ static int spi_init(const char *device)
  * @param len Number of bytes to transfer
  * @return Number of bytes transferred, or -1 on error
  */
-//ssize_t spi_transfer(int spi_fd, uint8_t *tx_buf, uint8_t *rx_buf, size_t len) {
-//    struct spi_ioc_transfer tr = {
-//        .tx_buf = (unsigned long)tx_buf,
-//        .rx_buf = (unsigned long)rx_buf,
-//        .len = len,
-//        .speed_hz = SPI_SPEED,
-//        .bits_per_word = SPI_BITS,
-//    };
-//    printf("MASTER sent %d byte\ns", len);
-
-//    int ret = ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr);
-//    if (ret < 1) {
-//        perror("ERROR of spi transfer");
-//        return -1;
-//    }
-//    return ret;
-//}
 ssize_t spi_transfer(int spi_fd,
                      uint8_t *tx_buf,
                      uint8_t *rx_buf,
@@ -399,6 +382,10 @@ int spi_recv_transfer(int spi_fd, uint8_t *out)
         };
 
         if (ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr) < 1) {
+            if (++try_cntr == (PKT_LEN / SPI_CHUNK_SIZE) * 3) {
+                printf("SPI no data\n");
+                return -1;
+            }
             continue;
         }
 
@@ -589,53 +576,18 @@ int spi_send_packet(int spi_fd, uint8_t *data, uint16_t len)
 //    printf("\n");
 //    // [DEBUG] End
 
-//    if (spi_transfer(spi_fd, buf, NULL, sizeof(buf)) < 0) return -1;
     if (spi_send_transfer(spi_fd, buf, sizeof(buf)) < 0) return -1;
     return 0;
 }
 
-///**
-// * @brief Receive a packet from ESP32 via SPI
-// *
-// * @param spi_fd SPI file descriptor
-// * @param data Buffer to store received packet
-// * @return Number of bytes received, or -1 on error
-// */
-//int spi_receive_packet(int spi_fd, uint8_t *data)
-//{
-//    size_t sz_i = 0;
-//    uint8_t buf[sizeof(spi_ip_hdr_t) + PKT_LEN + sizeof(uint32_t)];
-//    sz_i = spi_transfer(spi_fd, NULL, buf, sizeof(buf));
-//    if (sz_i < 0) {
-//        return -1;
-//    }
-
-//    // [DEBUG] Dump packet ONLY FOR DEBUG!!!
-//    printf("Received %zd bytes from TUN (IPv4)\n", sz_i);
-//    for (ssize_t i = 0; i < sz_i; i++) {
-//        if (i % 16 == 0) printf("\n%04zx: ", i);
-//        printf("%02x ", buf[i]);
-//    }
-//    printf("\n");
-//    // [DEBUG] End
-
-//    spi_ip_hdr_t *hdr = (spi_ip_hdr_t *)buf;
-//    if (ntohl(hdr->magic) != SPI_MAGIC) return -1;
-//    if (hdr->version != 0x01) return -1;
-
-//    uint16_t pkt_len = ntohs(hdr->length);
-//    if (pkt_len == 0 || pkt_len > PKT_LEN) return -1;
-
-//    uint8_t *payload = buf + sizeof(spi_ip_hdr_t);
-//    uint32_t recv_crc;
-//    memcpy(&recv_crc, payload + pkt_len, sizeof(recv_crc));
-
-//    if (ntohl(recv_crc) != crc32(0, payload, pkt_len)) return -1;
-
-//    memcpy(data, payload, pkt_len);
-//    return pkt_len;
-//}
-
+/**
+ * @brief Receive a packet from ESP32 via SPI
+ *
+ * @param spi_fd SPI file descriptor
+ * @param out_buf Buffer to store received packet
+ * @param length Return length of packet
+ * @return Number of bytes received, or -1 on error
+ */
 int spi_receive(int spi_fd, uint8_t *out_buf, uint16_t *length)
 {
     memset(rx_buff, 0 ,sizeof(rx_buff));
@@ -684,11 +636,10 @@ int spi_receive(int spi_fd, uint8_t *out_buf, uint16_t *length)
  * @param tun_fd TUN file descriptor
  * @param spi_fd SPI file descriptor
  */
-void forward_loop(int tun_fd, int spi_fd) {
+void forward_loop(int tun_fd, int spi_fd)
+{
     uint8_t tun_buf[MAX_PKT_SIZE];
-    uint8_t spi_buf[MAX_PKT_SIZE];
 
-    int dbg_cntr = 0;
     while (1) {
         ssize_t n = read_tun_packet(tun_fd, tun_buf);
         if (n > 0) {
@@ -716,55 +667,28 @@ void forward_loop(int tun_fd, int spi_fd) {
             }
         }
 
-//        int rcv_len = spi_receive_packet(spi_fd, spi_buf);
-//        if (rcv_len > 0) {
-//            uint8_t ip_version = spi_buf[0] >> 4;
-//            if (ip_version == 4) {
-//                write_tun_packet(tun_fd, spi_buf, rcv_len);
-//            }
-//        }
+//        static uint8_t cntr = 0;
+//        printf("%u\n", cntr++);
 
-        static uint8_t cntr = 0;
-        printf("%u\n", cntr++);
-//        spi_receive(spi_fd);
+        uint16_t length = 0;
+        static uint8_t rx[PKT_LEN];
+        if (!spi_receive(spi_fd, rx, &length)) {
 
-        if (dbg_cntr++ > 3) {
-          break;
+            // [DEBUG] Dump packet ONLY FOR DEBUG!!!
+            printf("\nReceived valid SPI packet (%d bytes):", length);
+            for (int i = 0; i < length; i++) {
+                if (i % 16 == 0) printf("\n%04x: ", i);
+                printf("%02x ", rx[i]);
+            }
+            printf("\n");
+            // [DEBUG] End
+
+//            write_tun_packet(tun_fd, rx, length);
+
         }
+
         usleep(1000);
     }
-}
-
-void spi_send_incremental(int spi_fd) {
-    #define BUF_LEN 32
-    uint8_t tx_buf[BUF_LEN];
-    uint8_t rx_buf[BUF_LEN];
-
-    // Заповнюємо буфер значеннями від 0 до 31
-    for (int i = 0; i < BUF_LEN; i++) {
-        tx_buf[i] = i;
-    }
-
-    struct spi_ioc_transfer tr = {
-        .tx_buf = (unsigned long)tx_buf,
-        .rx_buf = (unsigned long)rx_buf, // можемо ігнорувати отримане
-        .len = BUF_LEN,
-        .speed_hz = SPI_SPEED,
-        .bits_per_word = SPI_BITS,
-    };
-
-    int ret = ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr);
-    if (ret < 1) {
-        perror("spi transfer");
-        return;
-    }
-
-    printf("Sent 32 incremental bytes:\n");
-    for (int i = 0; i < BUF_LEN; i++) {
-        printf("%02x ", tx_buf[i]);
-        if ((i + 1) % 16 == 0) printf("\n");
-    }
-    printf("\n");
 }
 
 /**
@@ -774,8 +698,8 @@ void spi_send_incremental(int spi_fd) {
  *
  * @param tun_fd TUN file descriptor
  */
-void test_icmp(int tun_fd) {
-
+void test_icmp(int tun_fd)
+{
     printf("Sending test ICMP packet to TUN...\n");
     write_tun_packet(tun_fd, payload_pack, sizeof(payload_pack));
 }
@@ -839,14 +763,12 @@ int main() {
     printf("=== TEST 1: master -> slave ===\n");
     for (int i = 0; i < 3; i++) {
         spi_send_packet(spi_fd, payload_pack, sizeof(payload_pack));
-        usleep(100000);
+        usleep(1000);
     }
 
-    usleep(1000);
+    usleep(200000);
     printf("=== TEST 2: master <- slave ===\n");
     for (int i = 0; i < 3; i++) {
-//       spi_read_packet(spi_fd);
-
         uint16_t length = 0;
         static uint8_t rx[PKT_LEN];
         if (!spi_receive(spi_fd, rx, &length)) {
@@ -858,17 +780,7 @@ int main() {
             printf("\n");
         }
 
-//        memset(rx_buff, 0 ,sizeof(rx_buff));
-//        if (!spi_recv_transfer(spi_fd, rx_buff)) {
-//            // [DEBUG] Dump packet ONLY FOR DEBUG!!!
-//            printf("MASTER received: ");
-//            for (int i = 0; i < sizeof(rx_buff); i++)
-//                printf("%02x ", rx_buff[i]);
-//            printf("\n");
-//            // [DEBUG] End
-
-//        }
-       usleep(200000);
+        usleep(200000);
     }
 
     close(spi_fd);
