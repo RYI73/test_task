@@ -119,7 +119,6 @@ esp_err_t spi_slave_recv_packet(uint8_t *rx_packet, TickType_t timeout_ms)
 
     uint8_t chunk_buf[SPI_CHUNK_SIZE];
     size_t total_received = 0;
-    uint8_t cntr = 0;
     uint8_t try_cntr = 0;
     uint8_t matrix[128] = {0};
 
@@ -171,18 +170,17 @@ esp_err_t spi_slave_recv_packet(uint8_t *rx_packet, TickType_t timeout_ms)
         total_received += chunk_len;
         matrix[seq] = 1;
 
-        cntr++;
         printf("ch %u/%u %02X %02X\n", seq+1, total_chunks, chunk_buf[4], chunk_buf[5]);
 //        dump_bytes(&chunk_buf[4], 2);
         if (seq+1 == total_chunks) {
             printf("OK\n");
-            break;
+            return ESP_OK;
         }
 
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 
-    return ESP_OK;
+    return ESP_FAIL;
 }
 
 void spi_slave_send_packet(const uint8_t *data)
@@ -317,36 +315,71 @@ static esp_err_t spi_send_ip(const uint8_t *data, size_t len)
 
     spi_slave_send_packet(spi_tx_buf);
 
-//    spi_slave_transaction_t t = {
-//        .length    = off * 8,
-//        .tx_buffer = spi_tx_buf,
-//        .rx_buffer = NULL,
-//    };
+    return ESP_OK;
+}
 
-//    xSemaphoreTake(spi_mutex, portMAX_DELAY);
-//    esp_err_t ret = spi_slave_transmit(SPI_HOST, &t, pdMS_TO_TICKS(50));
-//    xSemaphoreGive(spi_mutex);
+/**
+ * @brief Receive IPv4 packet from SPI master
+ *
+ * @param out_buf Output buffer
+ * @param timeout_ms receive timeout in ms
+ *
+ * @return ESP_OK if packet received
+ */
+static esp_err_t spi_recv_ip(uint8_t *out_buf, uint16_t *length, TickType_t timeout_ms)
+{
+    memset(spi_rx_buf, 0 ,sizeof(spi_rx_buf));
+    esp_err_t ret = spi_slave_recv_packet(spi_rx_buf, timeout_ms);
+    if (ret != ESP_OK) {
+        return ret;
+    }
 
-//    if (ret == ESP_OK) {
-//        ESP_LOGI(TAG, "sent OK");
-//    }
-//    else {
-//        ESP_LOGI(TAG, "not sent, ret %d", ret);
-//    }
+//    dump_bytes(spi_rx_buf, PKT_LEN);
 
+    spi_ip_hdr_t *hdr = (spi_ip_hdr_t *)spi_rx_buf;
+    if (hdr->magic != SPI_MAGIC || hdr->version != SPI_PROTO_VERSION) {
+        printf("Bad magic %08lX != %08X\n", hdr->magic, SPI_MAGIC);
+        return ESP_FAIL;
+    }
+
+    if (hdr->length == 0 || hdr->length > PKT_LEN) {
+        printf("Bad length %u\n", hdr->length);
+        return ESP_FAIL;
+    }
+
+    uint8_t *payload = spi_rx_buf + sizeof(spi_ip_hdr_t);
+    uint32_t rx_crc;
+    memcpy(&rx_crc, payload + hdr->length, sizeof(rx_crc));
+
+    if (rx_crc != esp_crc32_le(0, payload, hdr->length)) {
+        printf("Bad crc\n");
+        return ESP_FAIL;
+    }
+
+    memcpy(out_buf, payload, hdr->length);
+    *length = hdr->length;
+
+    printf("Packet is validated OK len %u\n", hdr->length);
     return ESP_OK;
 }
 
 void app_main(void)
 {
+    int idx = 0;
     spi_slave_init();
+    uint16_t length[3];
 
+    printf("=== TEST 1: master -> slave ===\n");
     for (int i = 0; i < 3; i++) {
-        spi_slave_recv_packet(rx_buf[i], i==0 ? 5000 : 300);
+//        spi_slave_recv_packet(rx_buf[i], i==0 ? 5000 : 300);
+        if (spi_recv_ip(rx_buf[idx], &length[idx], i==0 ? 5000 : 300) == ESP_OK) {
+            printf("length[idx] %u\n", length[idx]);
+            idx++;
+        }
     }
-    for (int i = 0; i < 3; i++) {
-        ESP_LOGI(TAG, "Received [%d]:", i);
-        dump_bytes(rx_buf[i], PKT_LEN);
+    for (int i = 0; i < idx; i++) {
+        ESP_LOGI(TAG, "\nReceived valid SPI [%d] packet (%d bytes):", i, length[i]);
+        dump_bytes(rx_buf[i], length[i]);
     }
 
 //     vTaskDelay(pdMS_TO_TICKS(100000));
