@@ -22,11 +22,6 @@
 #include "driver/spi_slave.h"
 #include "driver/gpio.h"
 
-#include "lwip/netif.h"
-#include "lwip/ip4.h"
-#include "lwip/ip.h"
-#include "lwip/pbuf.h"
-
 #include "lwip/prot/ip4.h"
 #include "lwip/prot/tcp.h"
 #include "freertos/event_groups.h"
@@ -34,6 +29,7 @@
 #include "lwip/icmp.h"
 #include "lwip/inet_chksum.h"
 #include "lwip/tcpip.h"
+#include "lwip/err.h"
 
 #define TAG "L3_ROUTER"
 #define SPI_HOST SPI2_HOST
@@ -66,8 +62,8 @@ typedef struct __attribute__((packed)) {
 
 static EventGroupHandle_t wifi_event_group;
 
-static uint8_t spi_rx_buf[PKT_LEN];
-static uint8_t spi_tx_buf[PKT_LEN];
+static uint8_t spi_rx_buf[PKT_LEN*2];
+static uint8_t spi_tx_buf[PKT_LEN*2];
 
 static spi_slave_transaction_t transactions[MAX_CHUNKS];
 static uint8_t tx_buffers[MAX_CHUNKS][SPI_CHUNK_SIZE];
@@ -95,7 +91,7 @@ static void gpio_ready_init(void)
     };
 
     gpio_config(&io);
-    gpio_set_level(GPIO_SPI_READY, 0); // не готовий
+    gpio_set_level(GPIO_SPI_READY, 0);
 }
 
 static void dump_bytes(const uint8_t *buf, int len)
@@ -111,7 +107,63 @@ static void dump_bytes(const uint8_t *buf, int len)
     }
 }
 
-static void spi_ipv4_input(const uint8_t *buf, size_t len)
+//static void spi_ipv4_input(const uint8_t *buf, size_t len)
+//{
+//    if (len < sizeof(struct ip_hdr)) {
+//        ESP_LOGI(TAG, "Bad len %d", len);
+//        return;
+//    }
+
+//    struct ip_hdr *iph = (struct ip_hdr *)buf;
+
+//    /* Basic IPv4 sanity */
+//    if (IPH_V(iph) != 4) {
+//        ESP_LOGI(TAG, "Not IPv4");
+//        return;
+//    }
+
+//    uint16_t ip_hlen = IPH_HL_BYTES(iph);
+//    if (ip_hlen < sizeof(struct ip_hdr) || ip_hlen > len) {
+//        ESP_LOGI(TAG, "Bad IP header length");
+//        return;
+//    }
+
+//    /* allocate RAW pbuf (contains full IP packet) */
+//    struct pbuf *p = pbuf_alloc(PBUF_RAW, len, PBUF_RAM);
+//    if (!p) {
+//        ESP_LOGI(TAG, "Bad pbuf_alloc");
+//        return;
+//    }
+
+//    memcpy(p->payload, buf, len);
+
+//    switch (IPH_PROTO(iph)) {
+
+//    case IP_PROTO_ICMP:
+//        ESP_LOGI(TAG, "ICMP packet");
+//        ip4_input(p, netif_default);
+//        break;
+
+//    case IP_PROTO_TCP:
+//        ESP_LOGI(TAG, "TCP packet");
+//        ip4_input(p, netif_default);
+//        break;
+
+//    case IP_PROTO_UDP:
+//        ESP_LOGI(TAG, "UDP packet");
+//        ip4_input(p, netif_default);
+//        break;
+
+//    default:
+//        ESP_LOGI(TAG, "Unknown L4 proto: %u", IPH_PROTO(iph));
+//        pbuf_free(p);
+//        return;
+//    }
+
+//    /* ip4_input takes ownership of pbuf */
+//}
+
+static void spi_ipv4_forward(const uint8_t *buf, size_t len)
 {
     if (len < sizeof(struct ip_hdr)) {
         return;
@@ -119,7 +171,6 @@ static void spi_ipv4_input(const uint8_t *buf, size_t len)
 
     struct ip_hdr *iph = (struct ip_hdr *)buf;
 
-    /* Basic IPv4 sanity */
     if (IPH_V(iph) != 4) {
         ESP_LOGW(TAG, "Not IPv4");
         return;
@@ -131,38 +182,38 @@ static void spi_ipv4_input(const uint8_t *buf, size_t len)
         return;
     }
 
-    /* allocate RAW pbuf (contains full IP packet) */
-    struct pbuf *p = pbuf_alloc(PBUF_RAW, len, PBUF_RAM);
-    if (!p) {
+    uint16_t l4_len = len - ip_hlen;
+    uint8_t *l4 = (uint8_t *)buf + ip_hlen;
+
+    /* allocate TRANSPORT pbuf (IMPORTANT) */
+    struct pbuf *q = pbuf_alloc(PBUF_TRANSPORT, l4_len, PBUF_RAM);
+    if (!q) {
+        ESP_LOGE(TAG, "pbuf_alloc failed");
         return;
     }
 
-    memcpy(p->payload, buf, len);
+    memcpy(q->payload, l4, l4_len);
 
-    switch (IPH_PROTO(iph)) {
+    /* copy IP addresses SAFELY */
+    ip4_addr_t src, dst;
+    ip4_addr_copy(src, iph->src);
+    ip4_addr_copy(dst, iph->dest);
 
-    case IP_PROTO_ICMP:
-        ESP_LOGD(TAG, "ICMP packet");
-        ip4_input(p, netif_default);
-        break;
+    err_t err = ip4_output_if(
+        q,
+        &src,
+        &dst,
+        IPH_TTL(iph),
+        IPH_TOS(iph),
+        IPH_PROTO(iph),
+        netif_default
+    );
 
-    case IP_PROTO_TCP:
-        ESP_LOGD(TAG, "TCP packet");
-        ip4_input(p, netif_default);
-        break;
-
-    case IP_PROTO_UDP:
-        ESP_LOGD(TAG, "UDP packet");
-        ip4_input(p, netif_default);
-        break;
-
-    default:
-        ESP_LOGW(TAG, "Unknown L4 proto: %u", IPH_PROTO(iph));
-        pbuf_free(p);
-        return;
+    if (err != ERR_OK) {
+        ESP_LOGW(TAG, "ip4_output_if failed: %d", err);
     }
 
-    /* ip4_input takes ownership of pbuf */
+    pbuf_free(q);
 }
 
 static void spi_slave_init(void)
@@ -196,7 +247,7 @@ esp_err_t spi_slave_recv_packet(uint8_t *rx_packet, TickType_t timeout_ms)
         return ESP_FAIL;
     }
 
-    uint8_t chunk_buf[SPI_CHUNK_SIZE];
+    static uint8_t chunk_buf[SPI_CHUNK_SIZE];
     size_t total_received = 0;
     uint8_t matrix[128] = {0};
 
@@ -208,6 +259,7 @@ esp_err_t spi_slave_recv_packet(uint8_t *rx_packet, TickType_t timeout_ms)
             break;
         }
 
+        memset(chunk_buf, 0, sizeof(chunk_buf));
         spi_slave_transaction_t t = {
             .length = SPI_CHUNK_SIZE * 8,
             .rx_buffer = chunk_buf,
@@ -219,7 +271,6 @@ esp_err_t spi_slave_recv_packet(uint8_t *rx_packet, TickType_t timeout_ms)
             continue;
         }
 
-
         if (chunk_buf[0] != SPI_CHUNK_MAGIC) {
 //            printf("SPI chunk magic mismatch: 0x%02x\n", chunk_buf[0]);
             continue;
@@ -228,6 +279,8 @@ esp_err_t spi_slave_recv_packet(uint8_t *rx_packet, TickType_t timeout_ms)
         uint8_t seq       = chunk_buf[1];
         uint8_t total_chunks = chunk_buf[2];
         uint8_t chunk_len   = chunk_buf[3];
+
+        printf("ch %u/%u %02X %02X\n", seq+1, total_chunks, chunk_buf[4], chunk_buf[5]);
 
         if (matrix[seq]) {
             continue;
@@ -247,17 +300,19 @@ esp_err_t spi_slave_recv_packet(uint8_t *rx_packet, TickType_t timeout_ms)
         memcpy(rx_packet + offset, &chunk_buf[4], chunk_len);
         total_received += chunk_len;
         matrix[seq] = 1;
+        printf("offset %d chunk_len %u\n", offset, chunk_len);
 
-//        printf("ch %u/%u %02X %02X\n", seq+1, total_chunks, chunk_buf[4], chunk_buf[5]);
         if (seq+1 == total_chunks) {
+            printf("Good\n");
             return ESP_OK;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(1));
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
 
     return ESP_FAIL;
 }
+
 #if 0
 void spi_slave_send_packet(const uint8_t *data)
 {
@@ -330,7 +385,7 @@ void spi_slave_send_packet(const uint8_t *data)
     size_t offset = 0;
 
     TickType_t start = xTaskGetTickCount();
-    const TickType_t timeout = pdMS_TO_TICKS(200);
+    const TickType_t timeout = pdMS_TO_TICKS(500);
 
     for (uint8_t seq = 0; seq < total_chunks; seq++) {
         if (xTaskGetTickCount() - start >= timeout) {
@@ -355,10 +410,14 @@ void spi_slave_send_packet(const uint8_t *data)
         transactions[seq].length    = SPI_CHUNK_SIZE * 8;
         transactions[seq].tx_buffer = tx_buffers[seq];
         transactions[seq].rx_buffer = rx_buffers[seq];
+//        transactions[seq].rx_buffer = NULL;
 
+//        vTaskDelay(pdMS_TO_TICKS(20));
         gpio_set_level(GPIO_SPI_READY, 1);
+//        vTaskDelay(pdMS_TO_TICKS(20));
 
-        ret = spi_slave_queue_trans(SPI_HOST, &transactions[seq], pdMS_TO_TICKS(50));//portMAX_DELAY
+        ret = spi_slave_queue_trans(SPI_HOST, &transactions[seq], portMAX_DELAY);//portMAX_DELAY
+//        ret = spi_slave_queue_trans(SPI_HOST, &transactions[seq], pdMS_TO_TICKS(50));//portMAX_DELAY
         if (ret != ESP_OK) {
             ESP_LOGW(TAG, "SPI not queued, retrying...");
             vTaskDelay(pdMS_TO_TICKS(5));
@@ -375,7 +434,8 @@ void spi_slave_send_packet(const uint8_t *data)
                 res = ESP_ERR_TIMEOUT;
                 break;
             }
-            ret = spi_slave_get_trans_result(SPI_HOST, &ret_trans, pdMS_TO_TICKS(50));
+            ret = spi_slave_get_trans_result(SPI_HOST, &ret_trans, portMAX_DELAY);
+//            ret = spi_slave_get_trans_result(SPI_HOST, &ret_trans, pdMS_TO_TICKS(50));
             if (ret == ESP_OK && ret_trans == &transactions[seq]) break;// transaction completed
             if (ret != ESP_OK && ret != ESP_ERR_TIMEOUT) {
                 ESP_LOGE(TAG, "SPI error %d", ret);
@@ -542,7 +602,7 @@ static esp_err_t spi_recv_ip(uint8_t *out_buf, uint16_t *length, TickType_t time
         return ESP_FAIL;
     }
 
-    if (hdr->length == 0 || hdr->length > PKT_LEN) {
+    if (hdr->length == 0 || hdr->length > PKT_LEN - sizeof(spi_ip_hdr_t) - sizeof(uint32_t)) {
         printf("Bad length %u\n", hdr->length);
         return ESP_FAIL;
     }
@@ -783,18 +843,18 @@ static void spi_rx_task(void *arg)
 {
     (void)arg;
 
-    uint8_t buf[PKT_LEN];
-    uint16_t length;
+    uint8_t buf[PKT_LEN*2];
+    uint16_t length = 0;
 
     ip_addr_t dest;
     IP_ADDR4(&dest, 0,0,0,0); /* IPv4 wildcard */
 
     while (1) {
-//        if (spi_recv_ip(buf, &length, 300) == ESP_OK) {
-//            ESP_LOGI(TAG, "\nReceived valid SPI packet (%d bytes):", length);
-//            dump_bytes(buf, length);
-//            spi_ipv4_input(buf, length);
-//        }
+        if (spi_recv_ip(buf, &length, 100) == ESP_OK && length != 0) {
+            ESP_LOGI(TAG, "\nReceived valid SPI packet (%d bytes):", length);
+            dump_bytes(buf, length);
+            spi_ipv4_forward(buf, length);
+        }
         vTaskDelay(pdMS_TO_TICKS(5));
     }
 

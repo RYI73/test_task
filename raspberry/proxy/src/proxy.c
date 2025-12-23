@@ -53,7 +53,17 @@ uint8_t payload_pack[] = {
     0x2c,0x2d,0x2e,0x2f,0x30,0x31,0x32,0x33,0x34,0x35,0x36,0x37
 };
 
+unsigned char icmp_replay[] = {
+    0x45, 0x00, 0x00, 0x54, 0xB0, 0xD3, 0x00, 0x00, 0x40, 0x01, 0xFD, 0xB4, 0x0A, 0x00, 0x00, 0x02,
+    0xC0, 0xA8, 0x01, 0x77, 0x00, 0x00, 0xE0, 0xE8, 0xF8, 0xF8, 0x00, 0x6C, 0xD0, 0xE9, 0x49, 0x69,
+    0x00, 0x00, 0x00, 0x00, 0x4C, 0x8C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x11, 0x12, 0x13,
+    0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23,
+    0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30, 0x31, 0x32, 0x33,
+    0x34, 0x35, 0x36, 0x37
+};
+
 static uint8_t rx_buff[PKT_LEN];
+int gpio_fd = -1;
 
 /**
  * @struct spi_ip_hdr_t
@@ -369,7 +379,7 @@ int spi_send_transfer(int spi_fd, const uint8_t *data, size_t len)
         }
 
 //        // [DEBUG] Dump packet ONLY FOR DEBUG!!!
-//        printf("Send %zd chunk:\n", seq);
+        printf("Send chunk %u/%u\n", seq, total_chunks);
 //        for (ssize_t i = 0; i < SPI_CHUNK_SIZE; i++) {
 //            if (i % 16 == 0) printf("\n%04zx: ", i);
 //            printf("%02x ", tx[i]);
@@ -386,7 +396,7 @@ int spi_send_transfer(int spi_fd, const uint8_t *data, size_t len)
 
 int spi_recv_transfer(int spi_fd, uint8_t *out)
 {
-    uint8_t tx[SPI_CHUNK_SIZE] = {0};   // master завжди щось тактує
+    uint8_t tx[SPI_CHUNK_SIZE] = {0};
     uint8_t rx[SPI_CHUNK_SIZE];
 
     size_t offset = 0;
@@ -394,11 +404,11 @@ int spi_recv_transfer(int spi_fd, uint8_t *out)
     uint8_t received_chunks = 0;
     uint8_t matrix[128] = {0};
     uint32_t start = 0;
-    const uint32_t timeout = 500;
+    const uint32_t timeout = 200;
     bool is_spi_slave_ready = false;
 
-    int gpio_fd = open(GPIO_READY_SYSFS, O_RDONLY);
     char gpio_value;
+//    printf("...\n");
 
     start = now_ms();
     while (1) {
@@ -409,6 +419,7 @@ int spi_recv_transfer(int spi_fd, uint8_t *out)
             break;
         }
         if (now_ms() - start >= 50) {
+//            printf("quit\n");
             break;
         }
         usleep(100);
@@ -726,6 +737,7 @@ void forward_loop(int tun_fd, int spi_fd)
                 }
                 // [DEBUG] End
 
+                usleep(100000);
                 // Forward to SPI
                 spi_send_packet(spi_fd, tun_buf, n);
             } else if (ip_version == 6) {
@@ -751,7 +763,7 @@ void forward_loop(int tun_fd, int spi_fd)
             printf("\n");
             // [DEBUG] End
 
-//            write_tun_packet(tun_fd, rx, length);
+            write_tun_packet(tun_fd, spi_rx, length);
 
         }
 
@@ -803,6 +815,8 @@ int main() {
     // Disable IPv6 on tun0
     system("sudo sysctl -w net.ipv6.conf.tun0.disable_ipv6=1");
 
+    gpio_fd = open(GPIO_READY_SYSFS, O_RDONLY);
+
     // [DEBUG] Test ICMP ONLY FOR DEBUG!!!
 //    for (int i = 0; i < 5; i++) {
 //        spi_write_packet(spi_fd, i * 0x10);
@@ -825,6 +839,12 @@ int main() {
 
 //    test_icmp(tun_fd);
     // [DEBUG] End
+
+    printf("=== TEST 1: master -> slave ===\n");
+    for (int i = 0; i < 3; i++) {
+        spi_send_packet(spi_fd, icmp_replay, sizeof(icmp_replay));
+        usleep(100000);
+    }
 
     forward_loop(tun_fd, spi_fd);
 
@@ -851,6 +871,7 @@ int main() {
 //        usleep(1000);
 //    }
 
+    close(gpio_fd);
     close(spi_fd);
     close(tun_fd);
     return 0;
