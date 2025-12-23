@@ -49,6 +49,8 @@
 #define GPIO_SCLK           15
 #define GPIO_CS             14
 
+#define SPI_TX_QUEUE_LEN 8
+
 #define WIFI_SSID "Linksys00283"
 #define WIFI_PASS "@Valovyi_Ruslan1973"
 
@@ -65,6 +67,11 @@ typedef struct __attribute__((packed)) {
     uint16_t length;    /**< IPv4 packet length in bytes */
 } spi_ip_hdr_t;
 
+typedef struct {
+    uint16_t len;              // реальна довжина
+    uint8_t  data[PKT_LEN];    // payload
+} spi_pkt_t;
+
 static EventGroupHandle_t wifi_event_group;
 
 static uint8_t spi_rx_buf[PKT_LEN*2];
@@ -78,6 +85,8 @@ char *send_tx_buf = NULL;
 char *send_rx_buf = NULL;
 char *recv_tx_buf = NULL;
 char *recv_rx_buf = NULL;
+
+QueueHandle_t spi_tx_queue;
 
 static struct netif vnetif;
 
@@ -845,7 +854,13 @@ static err_t virtual_netif_output(struct netif *netif,
     (void)ipaddr;
 
     log_l3_tcp(p);
-    spi_send_ip(p->payload, p->len);
+//    spi_send_ip(p->payload, p->len);
+    spi_pkt_t pkt = {0};
+
+    pkt.len = p->tot_len;
+    pbuf_copy_partial(p, pkt.data, pkt.len, 0);
+
+    xQueueSend(spi_tx_queue, &pkt, 0);
 
     return ERR_OK; // sink
 }
@@ -962,6 +977,7 @@ static void spi_rx_task(void *arg)
 
     uint8_t buf[PKT_LEN*2];
     uint16_t length = 0;
+    spi_pkt_t tx_pkt;
 
     ip_addr_t dest;
     IP_ADDR4(&dest, 0,0,0,0); /* IPv4 wildcard */
@@ -972,87 +988,99 @@ static void spi_rx_task(void *arg)
             dump_bytes(buf, length);
             spi_ipv4_forward(buf, length);
         }
+
+        if (xQueueReceive(spi_tx_queue, &tx_pkt, 0)) {
+            spi_send_ip(tx_pkt.data, tx_pkt.len);
+        }
+
         vTaskDelay(pdMS_TO_TICKS(5));
     }
 
 }
 
 
-void app_main(void)
-{
-    int idx = 0;
-    spi_slave_init();
-    uint8_t rx_buf[10][PKT_LEN];
-    uint16_t length[10];
-
-    printf("=== TEST 1: master -> slave ===\n");
-    for (int i = 0; i < 10; i++) {
-        memset(rx_buf[idx], 0, PKT_LEN);
-        if (spi_recv_ip(rx_buf[idx], &length[idx], i==0 ? 5000 : 300) == ESP_OK) {
-            idx++;
-        }
-    }
-    gpio_set_level(GPIO_SPI_READY, 0);
-    for (int i = 0; i < idx; i++) {
-        ESP_LOGI(TAG, "\nReceived valid SPI [%d] packet (%d bytes):", i, length[i]);
-        dump_bytes(rx_buf[i], length[i]);
-    }
-
-    printf("=== TEST 2: master <- slave ===\n");
-    for (int i = 0; i < 10; i++) {
-        gpio_set_level(GPIO_SPI_READY, 0);
-        spi_send_ip(payload_pack, sizeof(payload_pack));
-        gpio_set_level(GPIO_SPI_READY, 0);
-//        vTaskDelay(pdMS_TO_TICKS(200));
-    }
-
-
-    while (1) vTaskDelay(portMAX_DELAY);
-}
-
 //void app_main(void)
 //{
-//    esp_err_t ret = nvs_flash_init();
-//    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-//        ESP_ERROR_CHECK(nvs_flash_erase());
-//        ret = nvs_flash_init();
-//    }
-//    ESP_ERROR_CHECK(ret);
-
-//    spi_mutex = xSemaphoreCreateMutex();
-
-//    ESP_ERROR_CHECK(esp_netif_init());
-//    ESP_ERROR_CHECK(esp_event_loop_create_default());
-
-////    esp_log_level_set("spi_slave", ESP_LOG_NONE);
-
+//    int idx = 0;
 //    spi_slave_init();
+//    uint8_t rx_buf[10][PKT_LEN];
+//    uint16_t length[10];
 
-//    gpio_ready_init();
-
-//    wifi_init();
-
-//    ESP_LOGI(TAG, "Waiting for IP...");
-//    xEventGroupWaitBits(wifi_event_group,
-//                        WIFI_GOT_IP_BIT,
-//                        pdFALSE,
-//                        pdTRUE,
-//                        portMAX_DELAY);
-
-//    virtual_netif_init();
-
-//    ESP_LOGI(TAG, "lwIP router + virtual sink ready");
-
-//    if (netif_default) {
-//        const ip4_addr_t *ip = netif_ip4_addr(netif_default);
-//        ESP_LOGI(TAG,
-//            "default netif: %c%c%d ip=%s",
-//            netif_default->name[0],
-//            netif_default->name[1],
-//            netif_default->num,
-//            ip ? ip4addr_ntoa(ip) : "none");
+//    printf("=== TEST 1: master -> slave ===\n");
+//    for (int i = 0; i < 10; i++) {
+//        memset(rx_buf[idx], 0, PKT_LEN);
+//        if (spi_recv_ip(rx_buf[idx], &length[idx], i==0 ? 5000 : 300) == ESP_OK) {
+//            idx++;
+//        }
+//    }
+//    gpio_set_level(GPIO_SPI_READY, 0);
+//    for (int i = 0; i < idx; i++) {
+//        ESP_LOGI(TAG, "\nReceived valid SPI [%d] packet (%d bytes):", i, length[i]);
+//        dump_bytes(rx_buf[i], length[i]);
 //    }
 
-//    xTaskCreate(spi_rx_task, "spi_rx_task", 4096, NULL, 3, NULL);
+//    printf("=== TEST 2: master <- slave ===\n");
+//    for (int i = 0; i < 10; i++) {
+//        gpio_set_level(GPIO_SPI_READY, 0);
+//        spi_send_ip(payload_pack, sizeof(payload_pack));
+//        gpio_set_level(GPIO_SPI_READY, 0);
+////        vTaskDelay(pdMS_TO_TICKS(200));
+//    }
 
+
+//    while (1) vTaskDelay(portMAX_DELAY);
 //}
+
+void app_main(void)
+{
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    spi_mutex = xSemaphoreCreateMutex();
+
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+    spi_tx_queue = xQueueCreate(
+        SPI_TX_QUEUE_LEN,
+        sizeof(spi_pkt_t)
+    );
+
+    assert(spi_tx_queue != NULL);
+
+//    esp_log_level_set("spi_slave", ESP_LOG_NONE);
+
+    spi_slave_init();
+
+    gpio_ready_init();
+
+    wifi_init();
+
+    ESP_LOGI(TAG, "Waiting for IP...");
+    xEventGroupWaitBits(wifi_event_group,
+                        WIFI_GOT_IP_BIT,
+                        pdFALSE,
+                        pdTRUE,
+                        portMAX_DELAY);
+
+    virtual_netif_init();
+
+    ESP_LOGI(TAG, "lwIP router + virtual sink ready");
+
+    if (netif_default) {
+        const ip4_addr_t *ip = netif_ip4_addr(netif_default);
+        ESP_LOGI(TAG,
+            "default netif: %c%c%d ip=%s",
+            netif_default->name[0],
+            netif_default->name[1],
+            netif_default->num,
+            ip ? ip4addr_ntoa(ip) : "none");
+    }
+
+    xTaskCreate(spi_rx_task, "spi_rx_task", 4096, NULL, 3, NULL);
+
+}

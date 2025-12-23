@@ -958,28 +958,28 @@ int main() {
         usleep(100000);
     }
 
-    usleep(100000);
-    printf("=== TEST 2: master <- slave ===\n");
-    for (int i = 0; i < 10; ) {
-        uint16_t length = 0;
-        static uint8_t rx[PKT_LEN];
-        if (!spi_receive(spi_fd, rx, &length)) {
-            printf("\nReceived %d valid SPI packet (%d bytes):", i+1, length);
-            for (int i = 0; i < length; i++) {
-                if (i % 16 == 0) printf("\n%04x: ", i);
-                printf("%02x ", rx[i]);
-            }
-            printf("\n");
-            i++;
-        }
-        else {
-          usleep(10000);
-        }
+//    usleep(100000);
+//    printf("=== TEST 2: master <- slave ===\n");
+//    for (int i = 0; i < 10; ) {
+//        uint16_t length = 0;
+//        static uint8_t rx[PKT_LEN];
+//        if (!spi_receive(spi_fd, rx, &length)) {
+//            printf("\nReceived %d valid SPI packet (%d bytes):", i+1, length);
+//            for (int i = 0; i < length; i++) {
+//                if (i % 16 == 0) printf("\n%04x: ", i);
+//                printf("%02x ", rx[i]);
+//            }
+//            printf("\n");
+//            i++;
+//        }
+//        else {
+//          usleep(10000);
+//        }
 
-        usleep(1000);
-    }
+//        usleep(1000);
+//    }
 
-//    forward_loop(tun_fd, spi_fd);
+    forward_loop(tun_fd, spi_fd);
 
 //    printf("=== TEST 1: master -> slave ===\n");
 //    for (int i = 0; i < 3; i++) {
