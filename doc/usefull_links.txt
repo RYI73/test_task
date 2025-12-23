@@ -1,0 +1,15 @@
+LWiP:
+https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/lwip.html?utm_source=chatgpt.com
+https://github.com/espressif/esp-lwip?utm_source=chatgpt.com
+https://espressif-docs.readthedocs-hosted.com/projects/esp-idf/en/stable/api-reference/network/tcpip_adapter_migration.html?utm_source=chatgpt.com
+https://docs.espressif.com/projects/esp-faq/en/latest/software-framework/protocols/lwip.html?utm_source=chatgpt.com
+
+FreeRTOS:
+https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/freertos.html?utm_source=chatgpt.com
+
+ESP-IDF:
+https://github.com/espressif/esp-idf?utm_source=chatgpt.com
+https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/tools/idf-monitor.html
+
+
+

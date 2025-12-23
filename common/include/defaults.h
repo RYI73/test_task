@@ -18,7 +18,8 @@
 /** TUN IPv4 address (string form) */
 #define TUN_ADDR                                "10.0.0.1"
 /** Server IPv4 address (string form) */
-#define SERVER_ADDR                             "192.168.1.122"
+//#define SERVER_ADDR                             "192.168.1.122"
+#define SERVER_ADDR                             "10.0.0.2"
 /** Server TCP port */
 #define SERVER_PORT                             (12345)
 /** Message sent to server */

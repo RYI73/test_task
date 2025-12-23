@@ -62,6 +62,11 @@ unsigned char icmp_replay[] = {
     0x34, 0x35, 0x36, 0x37
 };
 
+static uint8_t spi_recv_tx_buff[PKT_LEN + 1];
+static uint8_t spi_recv_rx_buff[PKT_LEN + 1];
+static uint8_t spi_send_tx_buff[PKT_LEN + 1];
+static uint8_t spi_send_rx_buff[PKT_LEN + 1];
+
 static uint8_t rx_buff[PKT_LEN];
 int gpio_fd = -1;
 
@@ -335,7 +340,114 @@ static int spi_init(const char *device)
 
 //    return total;
 //}
+# if 1
+int spi_send_transfer(int spi_fd, const uint8_t *data, size_t len)
+{
+    uint32_t start = 0;
+    bool is_timeout = false;
+    char gpio_value;
 
+    if (!data || len == 0)
+        return -1;
+
+    /* DEBUG dump */
+    printf("\nSPI SEND %zu bytes:", len);
+    for (size_t i = 0; i < len; i++) {
+        if (i % 16 == 0) printf("\n%04zx: ", i);
+        printf("%02x ", data[i]);
+    }
+    printf("\n");
+
+    memcpy(spi_send_tx_buff, data, len);
+
+    start = now_ms();
+    struct spi_ioc_transfer tr = {
+        .tx_buf        = (unsigned long)spi_send_tx_buff,
+        .rx_buf        = (unsigned long)spi_send_rx_buff,
+        .len           = len,
+        .speed_hz      = SPI_SPEED,
+        .bits_per_word = 8,
+        .cs_change     = 0,
+    };
+
+    while (1) {
+        lseek(gpio_fd, 0, SEEK_SET);
+        read(gpio_fd, &gpio_value, 1);
+        if (gpio_value == '1') break;   // ESP32 READY
+        if (now_ms() - start >= 500) {
+            is_timeout = true;
+            break;
+        }
+        usleep(100);
+    }
+
+    if (!is_timeout) {
+        int ret = ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr);
+        if (ret < 1) {
+            perror("spi send");
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+int spi_recv_transfer(int spi_fd, uint8_t *out)
+{
+    uint32_t start = 0;
+    bool is_timeout = false;
+    char gpio_value;
+
+    if (!out)
+        return -1;
+
+    memset(spi_recv_tx_buff, 0, PKT_LEN);
+    start = now_ms();
+    struct spi_ioc_transfer tr = {
+        .tx_buf        = (unsigned long)spi_recv_tx_buff,
+        .rx_buf        = (unsigned long)spi_recv_rx_buff,
+        .len           = PKT_LEN,
+        .speed_hz      = SPI_SPEED,
+        .bits_per_word = 8,
+        .cs_change     = 0,
+    };
+
+    while (1) {
+        lseek(gpio_fd, 0, SEEK_SET);
+        read(gpio_fd, &gpio_value, 1);
+        if (gpio_value == '1') break;   // ESP32 READY
+        if (now_ms() - start >= 100) {
+            is_timeout = true;
+            break;
+        }
+        usleep(100);
+    }
+
+    if (!is_timeout) {
+        int ret = ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr);
+        if (ret < 1) {
+            perror("spi recv");
+            return -1;
+        }
+        else {
+            memcpy(out, spi_recv_rx_buff, PKT_LEN);
+            /* DEBUG dump */
+//            printf("\nSPI RECV %zu bytes:", PKT_LEN);
+//            for (size_t i = 0; i < PKT_LEN; i++) {
+//                if (i % 16 == 0) printf("\n%04zx: ", i);
+//                printf("%02x ", out[i]);
+//            }
+//            printf("\n");
+        }
+    }
+    else {
+        return -1;
+    }
+
+    return 0;
+}
+
+#else
 int spi_send_transfer(int spi_fd, const uint8_t *data, size_t len)
 {
     uint8_t tx[SPI_CHUNK_SIZE] = {0};
@@ -471,7 +583,7 @@ int spi_recv_transfer(int spi_fd, uint8_t *out)
         uint8_t payload_len  = rx[3];
 
         // [DEBUG] Dump packet ONLY FOR DEBUG!!!
-        printf("chunk recv: %u/%u\n", seq, total_chunks);
+        printf("chunk recv: %u/%u\n", seq+1, total_chunks);
 //        for (int i = 0; i < SPI_CHUNK_SIZE; i++)
 //            printf("%02x ", rx[i]);
 //        printf("\n");
@@ -517,7 +629,7 @@ int spi_recv_transfer(int spi_fd, uint8_t *out)
 
     return -1;
 }
-
+#endif
 //static void spi_read_packet(int fd)
 //{
 
@@ -841,12 +953,33 @@ int main() {
     // [DEBUG] End
 
     printf("=== TEST 1: master -> slave ===\n");
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 10; i++) {
         spi_send_packet(spi_fd, icmp_replay, sizeof(icmp_replay));
         usleep(100000);
     }
 
-    forward_loop(tun_fd, spi_fd);
+    usleep(100000);
+    printf("=== TEST 2: master <- slave ===\n");
+    for (int i = 0; i < 10; ) {
+        uint16_t length = 0;
+        static uint8_t rx[PKT_LEN];
+        if (!spi_receive(spi_fd, rx, &length)) {
+            printf("\nReceived %d valid SPI packet (%d bytes):", i+1, length);
+            for (int i = 0; i < length; i++) {
+                if (i % 16 == 0) printf("\n%04x: ", i);
+                printf("%02x ", rx[i]);
+            }
+            printf("\n");
+            i++;
+        }
+        else {
+          usleep(10000);
+        }
+
+        usleep(1000);
+    }
+
+//    forward_loop(tun_fd, spi_fd);
 
 //    printf("=== TEST 1: master -> slave ===\n");
 //    for (int i = 0; i < 3; i++) {

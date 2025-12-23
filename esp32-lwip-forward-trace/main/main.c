@@ -42,7 +42,12 @@
 #define SPI_PROTO_VERSION 1
 #define MAX_CHUNKS ((PKT_LEN + SPI_CHUNK_PAYLOAD_SIZE - 1) / SPI_CHUNK_PAYLOAD_SIZE)
 #define WIFI_GOT_IP_BIT BIT0
+
 #define GPIO_SPI_READY GPIO_NUM_16
+#define GPIO_MOSI           12
+#define GPIO_MISO           13
+#define GPIO_SCLK           15
+#define GPIO_CS             14
 
 #define WIFI_SSID "Linksys00283"
 #define WIFI_PASS "@Valovyi_Ruslan1973"
@@ -69,6 +74,10 @@ static spi_slave_transaction_t transactions[MAX_CHUNKS];
 static uint8_t tx_buffers[MAX_CHUNKS][SPI_CHUNK_SIZE];
 static uint8_t rx_buffers[MAX_CHUNKS][SPI_CHUNK_SIZE];
 
+char *send_tx_buf = NULL;
+char *send_rx_buf = NULL;
+char *recv_tx_buf = NULL;
+char *recv_rx_buf = NULL;
 
 static struct netif vnetif;
 
@@ -83,7 +92,7 @@ uint8_t payload_pack[] = {
 static void gpio_ready_init(void)
 {
     gpio_config_t io = {
-        .pin_bit_mask = 1ULL << GPIO_SPI_READY,
+        .pin_bit_mask = BIT64(GPIO_SPI_READY),
         .mode = GPIO_MODE_OUTPUT,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .pull_up_en = GPIO_PULLUP_DISABLE,
@@ -92,6 +101,10 @@ static void gpio_ready_init(void)
 
     gpio_config(&io);
     gpio_set_level(GPIO_SPI_READY, 0);
+    //Enable pull-ups on SPI lines so we don't detect rogue pulses when no master is connected.
+    gpio_set_pull_mode(GPIO_MOSI, GPIO_PULLUP_ONLY);
+    gpio_set_pull_mode(GPIO_SCLK, GPIO_PULLUP_ONLY);
+    gpio_set_pull_mode(GPIO_CS, GPIO_PULLUP_ONLY);
 }
 
 static void dump_bytes(const uint8_t *buf, int len)
@@ -163,6 +176,18 @@ static void dump_bytes(const uint8_t *buf, int len)
 //    /* ip4_input takes ownership of pbuf */
 //}
 
+//Called after a transaction is queued and ready for pickup by master. We use this to set the handshake line high.
+void my_post_setup_cb(spi_slave_transaction_t *trans)
+{
+    gpio_set_level(GPIO_SPI_READY, 1);
+}
+
+//Called after transaction is sent/received. We use this to set the handshake line low.
+void my_post_trans_cb(spi_slave_transaction_t *trans)
+{
+    gpio_set_level(GPIO_SPI_READY, 0);
+}
+
 static void spi_ipv4_forward(const uint8_t *buf, size_t len)
 {
     if (len < sizeof(struct ip_hdr)) {
@@ -231,87 +256,123 @@ static void spi_slave_init(void)
         .mode = 0,
         .spics_io_num = 15,
         .queue_size = 3,
+        .flags = 0,
+        .post_setup_cb = my_post_setup_cb,
+        .post_trans_cb = my_post_trans_cb
     };
 
     ESP_ERROR_CHECK(
-        spi_slave_initialize(SPI_HOST, &buscfg, &slvcfg, 0)
-//        spi_slave_initialize(SPI_HOST, &buscfg, &slvcfg, SPI_DMA_CH_AUTO)
+//        spi_slave_initialize(SPI_HOST, &buscfg, &slvcfg, 0)
+        spi_slave_initialize(SPI_HOST, &buscfg, &slvcfg, SPI_DMA_CH_AUTO)
     );
+
+    send_tx_buf = spi_bus_dma_memory_alloc(SPI_HOST, 129, 0);
+    send_rx_buf = spi_bus_dma_memory_alloc(SPI_HOST, 129, 0);
+    recv_tx_buf = spi_bus_dma_memory_alloc(SPI_HOST, 129, 0);
+    recv_rx_buf = spi_bus_dma_memory_alloc(SPI_HOST, 129, 0);
+    assert(send_tx_buf && send_rx_buf && recv_tx_buf && recv_rx_buf);
 
     ESP_LOGI(TAG, "SPI slave initialized");
 }
 
-esp_err_t spi_slave_recv_packet(uint8_t *rx_packet, TickType_t timeout_ms)
-{
-    if (!rx_packet) {
-        return ESP_FAIL;
-    }
+//esp_err_t spi_slave_recv_packet(uint8_t *rx_packet, TickType_t timeout_ms)
+//{
+//    if (!rx_packet) {
+//        return ESP_FAIL;
+//    }
 
-    static uint8_t chunk_buf[SPI_CHUNK_SIZE];
-    size_t total_received = 0;
-    uint8_t matrix[128] = {0};
+//    static uint8_t chunk_buf[SPI_CHUNK_SIZE];
+//    size_t total_received = 0;
+//    uint8_t matrix[128] = {0};
 
-    TickType_t start = xTaskGetTickCount();
-    const TickType_t timeout = pdMS_TO_TICKS(timeout_ms);
+//    TickType_t start = xTaskGetTickCount();
+//    const TickType_t timeout = pdMS_TO_TICKS(timeout_ms);
 
-    while (total_received < PKT_LEN) {
-        if (xTaskGetTickCount() - start >= timeout) {
-            break;
-        }
+//    while (total_received < PKT_LEN) {
+//        if (xTaskGetTickCount() - start >= timeout) {
+//            break;
+//        }
 
-        memset(chunk_buf, 0, sizeof(chunk_buf));
-        spi_slave_transaction_t t = {
-            .length = SPI_CHUNK_SIZE * 8,
-            .rx_buffer = chunk_buf,
-            .tx_buffer = NULL,
-        };
+//        memset(chunk_buf, 0, sizeof(chunk_buf));
+//        spi_slave_transaction_t t = {
+//            .length = SPI_CHUNK_SIZE * 8,
+//            .rx_buffer = chunk_buf,
+//            .tx_buffer = NULL,
+//        };
 
-        esp_err_t r = spi_slave_transmit(SPI_HOST, &t, pdMS_TO_TICKS(50));
-        if (r != ESP_OK) {
-            continue;
-        }
+//        esp_err_t r = spi_slave_transmit(SPI_HOST, &t, pdMS_TO_TICKS(50));
+//        if (r != ESP_OK) {
+//            continue;
+//        }
 
-        if (chunk_buf[0] != SPI_CHUNK_MAGIC) {
-//            printf("SPI chunk magic mismatch: 0x%02x\n", chunk_buf[0]);
-            continue;
-        }
+//        if (chunk_buf[0] != SPI_CHUNK_MAGIC) {
+////            printf("SPI chunk magic mismatch: 0x%02x\n", chunk_buf[0]);
+//            continue;
+//        }
 
-        uint8_t seq       = chunk_buf[1];
-        uint8_t total_chunks = chunk_buf[2];
-        uint8_t chunk_len   = chunk_buf[3];
+//        uint8_t seq       = chunk_buf[1];
+//        uint8_t total_chunks = chunk_buf[2];
+//        uint8_t chunk_len   = chunk_buf[3];
 
-        printf("ch %u/%u %02X %02X\n", seq+1, total_chunks, chunk_buf[4], chunk_buf[5]);
+//        printf("ch %u/%u %02X %02X\n", seq+1, total_chunks, chunk_buf[4], chunk_buf[5]);
 
-        if (matrix[seq]) {
-            continue;
-        }
+//        if (matrix[seq]) {
+//            continue;
+//        }
 
-        if (chunk_len > SPI_CHUNK_PAYLOAD_SIZE) {
-//            printf("SPI chunk_len too big: %d\n", chunk_len);
-            continue;
-        }
+//        if (chunk_len > SPI_CHUNK_PAYLOAD_SIZE) {
+////            printf("SPI chunk_len too big: %d\n", chunk_len);
+//            continue;
+//        }
 
-        size_t offset = seq * SPI_CHUNK_PAYLOAD_SIZE;
-        if (offset + chunk_len > PKT_LEN) {
-//            printf("SPI chunk overflow\n");
-            continue;
-        }
+//        size_t offset = seq * SPI_CHUNK_PAYLOAD_SIZE;
+//        if (offset + chunk_len > PKT_LEN) {
+////            printf("SPI chunk overflow\n");
+//            continue;
+//        }
 
-        memcpy(rx_packet + offset, &chunk_buf[4], chunk_len);
-        total_received += chunk_len;
-        matrix[seq] = 1;
-        printf("offset %d chunk_len %u\n", offset, chunk_len);
+//        memcpy(rx_packet + offset, &chunk_buf[4], chunk_len);
+//        total_received += chunk_len;
+//        matrix[seq] = 1;
+//        printf("offset %d chunk_len %u\n", offset, chunk_len);
 
-        if (seq+1 == total_chunks) {
-            printf("Good\n");
-            return ESP_OK;
-        }
+//        if (seq+1 == total_chunks) {
+//            printf("Good\n");
+//            return ESP_OK;
+//        }
 
-        vTaskDelay(pdMS_TO_TICKS(5));
-    }
+//        vTaskDelay(pdMS_TO_TICKS(5));
+//    }
 
-    return ESP_FAIL;
-}
+//    return ESP_FAIL;
+//}
+
+//esp_err_t spi_slave_recv_packet(uint8_t *rx_packet, TickType_t timeout_ms)
+//{
+//    if (!rx_packet) {
+//        return ESP_FAIL;
+//    }
+
+//    spi_slave_transaction_t t = {
+//        .length    = PKT_LEN * 8,
+//        .rx_buffer = rx_packet,
+//        .tx_buffer = NULL,
+//    };
+
+//    esp_err_t ret = spi_slave_transmit(
+//        SPI_HOST,
+//        &t,
+//        pdMS_TO_TICKS(timeout_ms)
+//    );
+
+//    if (ret != ESP_OK) {
+//        ESP_LOGW(TAG, "SPI recv failed: %d", ret);
+//        return ret;
+//    }
+
+//    ESP_LOGI(TAG, "SPI packet received (%d bytes)", PKT_LEN);
+//    return ESP_OK;
+//}
 
 #if 0
 void spi_slave_send_packet(const uint8_t *data)
@@ -375,91 +436,147 @@ void spi_slave_send_packet(const uint8_t *data)
     }
 }
 #else
-void spi_slave_send_packet(const uint8_t *data)
+esp_err_t spi_slave_send_packet(const uint8_t *data)
 {
-    esp_err_t res = ESP_OK;
-    esp_err_t ret = 0;
-//    uint8_t tx[SPI_CHUNK_SIZE];
-
-    uint8_t total_chunks = MAX_CHUNKS;
-    size_t offset = 0;
-
-    TickType_t start = xTaskGetTickCount();
-    const TickType_t timeout = pdMS_TO_TICKS(500);
-
-    for (uint8_t seq = 0; seq < total_chunks; seq++) {
-        if (xTaskGetTickCount() - start >= timeout) {
-            res = ESP_ERR_TIMEOUT;
-            break;
-        }
-
-        size_t chunk_len = PKT_LEN - offset;
-        if (chunk_len > SPI_CHUNK_PAYLOAD_SIZE) {
-            chunk_len = SPI_CHUNK_PAYLOAD_SIZE;
-        }
-
-        memset(tx_buffers[seq], 0, sizeof(tx_buffers[seq]));
-        tx_buffers[seq][0] = SPI_CHUNK_MAGIC;
-        tx_buffers[seq][1] = seq;
-        tx_buffers[seq][2] = total_chunks;
-        tx_buffers[seq][3] = chunk_len;
-        memcpy(&tx_buffers[seq][4], data + offset, chunk_len);
-
-//        dump_bytes(tx_buffers[seq], SPI_CHUNK_SIZE);
-
-        transactions[seq].length    = SPI_CHUNK_SIZE * 8;
-        transactions[seq].tx_buffer = tx_buffers[seq];
-        transactions[seq].rx_buffer = rx_buffers[seq];
-//        transactions[seq].rx_buffer = NULL;
-
-//        vTaskDelay(pdMS_TO_TICKS(20));
-        gpio_set_level(GPIO_SPI_READY, 1);
-//        vTaskDelay(pdMS_TO_TICKS(20));
-
-        ret = spi_slave_queue_trans(SPI_HOST, &transactions[seq], portMAX_DELAY);//portMAX_DELAY
-//        ret = spi_slave_queue_trans(SPI_HOST, &transactions[seq], pdMS_TO_TICKS(50));//portMAX_DELAY
-        if (ret != ESP_OK) {
-            ESP_LOGW(TAG, "SPI not queued, retrying...");
-            vTaskDelay(pdMS_TO_TICKS(5));
-            seq--;
-            continue;
-        }
-        else {
-            ESP_LOGI(TAG, "Sent chunk %u", seq);
-        }
-
-        spi_slave_transaction_t *ret_trans;
-        while (1) {
-            if (xTaskGetTickCount() - start >= timeout) {
-                res = ESP_ERR_TIMEOUT;
-                break;
-            }
-            ret = spi_slave_get_trans_result(SPI_HOST, &ret_trans, portMAX_DELAY);
-//            ret = spi_slave_get_trans_result(SPI_HOST, &ret_trans, pdMS_TO_TICKS(50));
-            if (ret == ESP_OK && ret_trans == &transactions[seq]) break;// transaction completed
-            if (ret != ESP_OK && ret != ESP_ERR_TIMEOUT) {
-                ESP_LOGE(TAG, "SPI error %d", ret);
-                res = ESP_FAIL;
-                break;
-            }
-        }
-
-        gpio_set_level(GPIO_SPI_READY, 0);
-
-        if (res != ESP_OK) {
-            break;
-        }
-        vTaskDelay(pdMS_TO_TICKS(20));
-
-        offset += chunk_len;
+    if (!data) {
+        return ESP_FAIL;
     }
-    if (res == ESP_OK) {
-        ESP_LOGI(TAG, "Sent packet");
+
+    memcpy(send_tx_buf, data, PKT_LEN);
+    spi_slave_transaction_t t = {
+        .length    = PKT_LEN * 8,
+        .tx_buffer = send_tx_buf,
+        .rx_buffer = send_rx_buf,
+    };
+
+    esp_err_t ret = spi_slave_transmit(
+        SPI_HOST,
+        &t,
+        pdMS_TO_TICKS(1000)
+    );
+
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "SPI send failed: %d", ret);
+        return ret;
     }
-    else {
-        ESP_LOGI(TAG, "Packet not sent");
-    }
+
+    ESP_LOGI(TAG, "SPI packet sent (%d bytes)", PKT_LEN);
+    return ESP_OK;
 }
+
+esp_err_t spi_slave_recv_packet(uint8_t *rx_packet, TickType_t timeout_ms)
+{
+    if (!rx_packet) {
+        return ESP_FAIL;
+    }
+
+    spi_slave_transaction_t t = {
+        .length    = PKT_LEN * 8,
+        .tx_buffer = recv_tx_buf,
+        .rx_buffer = recv_rx_buf,
+    };
+
+    esp_err_t ret = spi_slave_transmit(
+        SPI_HOST,
+        &t,
+        portMAX_DELAY
+    );
+
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "SPI send failed: %d", ret);
+        return ret;
+    }
+
+    memcpy(rx_packet, recv_rx_buf, PKT_LEN);
+    ESP_LOGI(TAG, "SPI packet sent (%d bytes)", PKT_LEN);
+    return ESP_OK;
+}
+
+//void spi_slave_send_packet(const uint8_t *data)
+//{
+//    esp_err_t res = ESP_OK;
+//    esp_err_t ret = 0;
+////    uint8_t tx[SPI_CHUNK_SIZE];
+
+//    uint8_t total_chunks = MAX_CHUNKS;
+//    size_t offset = 0;
+
+//    TickType_t start = xTaskGetTickCount();
+//    const TickType_t timeout = pdMS_TO_TICKS(500);
+
+//    for (uint8_t seq = 0; seq < total_chunks; seq++) {
+//        if (xTaskGetTickCount() - start >= timeout) {
+//            res = ESP_ERR_TIMEOUT;
+//            break;
+//        }
+
+//        size_t chunk_len = PKT_LEN - offset;
+//        if (chunk_len > SPI_CHUNK_PAYLOAD_SIZE) {
+//            chunk_len = SPI_CHUNK_PAYLOAD_SIZE;
+//        }
+
+//        memset(tx_buffers[seq], 0, sizeof(tx_buffers[seq]));
+//        tx_buffers[seq][0] = SPI_CHUNK_MAGIC;
+//        tx_buffers[seq][1] = seq;
+//        tx_buffers[seq][2] = total_chunks;
+//        tx_buffers[seq][3] = chunk_len;
+//        memcpy(&tx_buffers[seq][4], data + offset, chunk_len);
+
+////        dump_bytes(tx_buffers[seq], SPI_CHUNK_SIZE);
+
+//        transactions[seq].length    = SPI_CHUNK_SIZE * 8;
+//        transactions[seq].tx_buffer = tx_buffers[seq];
+//        transactions[seq].rx_buffer = rx_buffers[seq];
+////        transactions[seq].rx_buffer = NULL;
+
+////        vTaskDelay(pdMS_TO_TICKS(20));
+////        gpio_set_level(GPIO_SPI_READY, 1);
+////        vTaskDelay(pdMS_TO_TICKS(20));
+
+//        ret = spi_slave_queue_trans(SPI_HOST, &transactions[seq], portMAX_DELAY);//portMAX_DELAY
+////        ret = spi_slave_queue_trans(SPI_HOST, &transactions[seq], pdMS_TO_TICKS(50));//portMAX_DELAY
+//        if (ret != ESP_OK) {
+//            ESP_LOGW(TAG, "SPI not queued, retrying...");
+//            vTaskDelay(pdMS_TO_TICKS(5));
+//            seq--;
+//            continue;
+//        }
+//        else {
+//            ESP_LOGI(TAG, "Sent chunk %u", seq);
+//        }
+
+//        spi_slave_transaction_t *ret_trans;
+//        while (1) {
+//            if (xTaskGetTickCount() - start >= timeout) {
+//                res = ESP_ERR_TIMEOUT;
+//                break;
+//            }
+//            ret = spi_slave_get_trans_result(SPI_HOST, &ret_trans, portMAX_DELAY);
+////            ret = spi_slave_get_trans_result(SPI_HOST, &ret_trans, pdMS_TO_TICKS(50));
+//            if (ret == ESP_OK && ret_trans == &transactions[seq]) break;// transaction completed
+//            if (ret != ESP_OK && ret != ESP_ERR_TIMEOUT) {
+//                ESP_LOGE(TAG, "SPI error %d", ret);
+//                res = ESP_FAIL;
+//                break;
+//            }
+//        }
+
+////        gpio_set_level(GPIO_SPI_READY, 0);
+
+//        if (res != ESP_OK) {
+//            break;
+//        }
+//        vTaskDelay(pdMS_TO_TICKS(5));
+
+//        offset += chunk_len;
+//    }
+//    if (res == ESP_OK) {
+//        ESP_LOGI(TAG, "Sent packet");
+//    }
+//    else {
+//        ESP_LOGI(TAG, "Packet not sent");
+//    }
+//}
 
 //void spi_slave_send_packet(const uint8_t *data)
 //{
@@ -727,8 +844,8 @@ static err_t virtual_netif_output(struct netif *netif,
     (void)netif;
     (void)ipaddr;
 
-    spi_send_ip(p->payload, p->len);
     log_l3_tcp(p);
+    spi_send_ip(p->payload, p->len);
 
     return ERR_OK; // sink
 }
@@ -861,76 +978,81 @@ static void spi_rx_task(void *arg)
 }
 
 
-//void app_main(void)
-//{
-//    int idx = 0;
-//    spi_slave_init();
-//    uint16_t length[3];
-
-//    printf("=== TEST 1: master -> slave ===\n");
-//    for (int i = 0; i < 3; i++) {
-//        if (spi_recv_ip(rx_buf[idx], &length[idx], i==0 ? 5000 : 300) == ESP_OK) {
-//            idx++;
-//        }
-//    }
-//    for (int i = 0; i < idx; i++) {
-//        ESP_LOGI(TAG, "\nReceived valid SPI [%d] packet (%d bytes):", i, length[i]);
-//        dump_bytes(rx_buf[i], length[i]);
-//    }
-
-//    printf("=== TEST 2: master <- slave ===\n");
-//    for (int i = 0; i < 3; i++) {
-//        spi_send_ip(payload_pack, sizeof(payload_pack));
-//        vTaskDelay(pdMS_TO_TICKS(200));
-//    }
-
-
-//    while (1) vTaskDelay(portMAX_DELAY);
-//}
-
 void app_main(void)
 {
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
-
-    spi_mutex = xSemaphoreCreateMutex();
-
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-
-    gpio_ready_init();
-
-//    esp_log_level_set("spi_slave", ESP_LOG_NONE);
-
+    int idx = 0;
     spi_slave_init();
+    uint8_t rx_buf[10][PKT_LEN];
+    uint16_t length[10];
 
-    wifi_init();
-
-    ESP_LOGI(TAG, "Waiting for IP...");
-    xEventGroupWaitBits(wifi_event_group,
-                        WIFI_GOT_IP_BIT,
-                        pdFALSE,
-                        pdTRUE,
-                        portMAX_DELAY);
-
-    virtual_netif_init();
-
-    ESP_LOGI(TAG, "lwIP router + virtual sink ready");
-
-    if (netif_default) {
-        const ip4_addr_t *ip = netif_ip4_addr(netif_default);
-        ESP_LOGI(TAG,
-            "default netif: %c%c%d ip=%s",
-            netif_default->name[0],
-            netif_default->name[1],
-            netif_default->num,
-            ip ? ip4addr_ntoa(ip) : "none");
+    printf("=== TEST 1: master -> slave ===\n");
+    for (int i = 0; i < 10; i++) {
+        memset(rx_buf[idx], 0, PKT_LEN);
+        if (spi_recv_ip(rx_buf[idx], &length[idx], i==0 ? 5000 : 300) == ESP_OK) {
+            idx++;
+        }
+    }
+    gpio_set_level(GPIO_SPI_READY, 0);
+    for (int i = 0; i < idx; i++) {
+        ESP_LOGI(TAG, "\nReceived valid SPI [%d] packet (%d bytes):", i, length[i]);
+        dump_bytes(rx_buf[i], length[i]);
     }
 
-    xTaskCreate(spi_rx_task, "spi_rx_task", 4096, NULL, 3, NULL);
+    printf("=== TEST 2: master <- slave ===\n");
+    for (int i = 0; i < 10; i++) {
+        gpio_set_level(GPIO_SPI_READY, 0);
+        spi_send_ip(payload_pack, sizeof(payload_pack));
+        gpio_set_level(GPIO_SPI_READY, 0);
+//        vTaskDelay(pdMS_TO_TICKS(200));
+    }
 
+
+    while (1) vTaskDelay(portMAX_DELAY);
 }
+
+//void app_main(void)
+//{
+//    esp_err_t ret = nvs_flash_init();
+//    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+//        ESP_ERROR_CHECK(nvs_flash_erase());
+//        ret = nvs_flash_init();
+//    }
+//    ESP_ERROR_CHECK(ret);
+
+//    spi_mutex = xSemaphoreCreateMutex();
+
+//    ESP_ERROR_CHECK(esp_netif_init());
+//    ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+////    esp_log_level_set("spi_slave", ESP_LOG_NONE);
+
+//    spi_slave_init();
+
+//    gpio_ready_init();
+
+//    wifi_init();
+
+//    ESP_LOGI(TAG, "Waiting for IP...");
+//    xEventGroupWaitBits(wifi_event_group,
+//                        WIFI_GOT_IP_BIT,
+//                        pdFALSE,
+//                        pdTRUE,
+//                        portMAX_DELAY);
+
+//    virtual_netif_init();
+
+//    ESP_LOGI(TAG, "lwIP router + virtual sink ready");
+
+//    if (netif_default) {
+//        const ip4_addr_t *ip = netif_ip4_addr(netif_default);
+//        ESP_LOGI(TAG,
+//            "default netif: %c%c%d ip=%s",
+//            netif_default->name[0],
+//            netif_default->name[1],
+//            netif_default->num,
+//            ip ? ip4addr_ntoa(ip) : "none");
+//    }
+
+//    xTaskCreate(spi_rx_task, "spi_rx_task", 4096, NULL, 3, NULL);
+
+//}
