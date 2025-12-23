@@ -6,7 +6,7 @@ BUILD_DIR_ARM=build_arm
 case $1 in
   --arm)
         if [ ! -d "$BUILD_DIR_ARM" ]; then
-             cmake -B $BUILD_DIR_ARM -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=../raspberry/toolchain-rpi-zero.cmake
+             cmake -B $BUILD_DIR_ARM -DTARGET_PLATFORM=arm -DCMAKE_TOOLCHAIN_FILE=../raspberry/toolchain-rpi-zero.cmake
         fi
         
         cd $BUILD_DIR_ARM
@@ -16,7 +16,7 @@ case $1 in
 
   --x86)
         if [ ! -d "$BUILD_DIR_X86" ]; then
-             cmake -B $BUILD_DIR_X86 -DCMAKE_BUILD_TYPE=Release 
+             cmake -B $BUILD_DIR_X86 -DTARGET_PLATFORM=x86
         fi
         
         cd ./$BUILD_DIR_X86

@@ -38,3 +38,21 @@
 /** Reply sent on mismatch */
 #define ERR_REPLY                               "ERROR"
 /***********************************************************************************************/
+/** SPI device settings */
+#define SPI_DEVICE                              "/dev/spidev0.0"
+#define SPI_MODE                                0
+#define SPI_BITS                                8
+#define SPI_SPEED                               1000000         /**< SPI speed in Hz */
+#define MAX_PKT_SIZE                            1500            /**< Maximum packet size for SPI transfer */
+#define SPI_MAGIC                               0x49504657      /**< Magic constant ('IPFW') for SPI framing */
+#define SPI_PROTO_VERSION                       1
+#define PKT_LEN                                 128
+
+/** GPIO handshake definitions */
+#define GPIO_READY_SYSFS                        "/sys/class/gpio/gpio537/value"
+#define GPIO_EXPORT                             "/sys/class/gpio/export"
+#define GPIO_BASE                               "/sys/class/gpio/%s/base"
+#define GPIO_CLASS                              "/sys/class/gpio"
+#define GPIO_HANDSHAKE_SPI                      25              /**< GPIO25 used as SPI handshake line */
+/***********************************************************************************************/
+
