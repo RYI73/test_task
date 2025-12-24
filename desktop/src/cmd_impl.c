@@ -34,7 +34,7 @@
 
 /***********************************************************************************************/
 static struct cli cli;
-static u16 sequence = 0;
+static u16 sequence = 0x10;
 /***********************************************************************************************/
 commands_t commands[] = {
     {"status_get",      cmd_status_get,             "Get client status."},
@@ -49,6 +49,7 @@ void cmd_init(const char *prompt,
 {
     cli_init(&cli, prompt, put_char, cb_data);
     print_logo();
+    cmd_usage();
     cli_prompt(&cli);
 }
 /***********************************************************************************************/
@@ -168,32 +169,36 @@ void cmd_send_string(int cli_argc, const char **cli_argv)
             len = PACKET_DATA_SIZE < strlen(direct) ? PACKET_DATA_SIZE : strlen(direct);
 
             /* Prepare packet to server */
-            prepare_request(&request, sequence++, len);
             memcpy(request.packet.data, direct, len);
             request.packet.header.type = PACKET_TYPE_STRING;
+            protocol_packet_prepare(&request, sequence++, len);
 
             /* Send message to server */
             result = socket_send_data(sockfd, (void*)request.buffer, len + PACKET_HEADER_SIZE);
             if (!isOk(result)) {
-                log_msg(LOG_ERR, "❌ send failed");
+                log_msg(LOG_ERR, "❌ Client send failed");
             }
-
 
             /* Receive reply */
             ssize_t received = sizeof(replay.buffer);
             result = socket_read_data(sockfd, replay.buffer, &received, SOCKET_READ_TIMEOUT_MS);
             if (!isOk(result) || received == 0) {
-                log_msg(LOG_ERR, "❌ recv failed");
+                log_msg(LOG_ERR, "❌ Client recv failed");
                 break;
             }
 
             /* Validate reply */
-            if (isOk(validate_replay(&replay))) {
-                if (isOk(replay.packet.header.result)) {
-                    print_string("Server responded: %s\n",  OK_REPLY);
+            if (isOk(protocol_packet_validate(&replay))) {
+                if (replay.packet.header.type == PACKET_TYPE_ANSWER) {
+                    if (isOk(replay.packet.header.answer_result)) {
+                        print_string("Server responded: %s on packet %u\n",  OK_REPLY, replay.packet.header.answer_sequence);
+                    }
+                    else {
+                        print_string("Server returned an error %u on packet %u\n",  replay.packet.header.answer_result, replay.packet.header.answer_sequence);
+                    }
                 }
                 else {
-                    print_string("Server returned an error %u\n",  replay.packet.header.result);
+                    print_string("Server responded with unknown type: %u\n",  replay.packet.header.type);
                 }
             }
 

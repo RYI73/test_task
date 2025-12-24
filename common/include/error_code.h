@@ -44,5 +44,7 @@ enum {
     /* PACKET ERRORS */
     RESULT_BAD_PREFIX_ERROR = 300,
     RESULT_BAD_CRC_ERROR,
+    RESULT_TYPE_UNKNOWN_ERROR,
+    RESULT_BROKEN_MSG_ERROR,
 };
 /***********************************************************************************************/

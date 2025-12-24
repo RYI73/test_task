@@ -122,32 +122,6 @@ char *strupr(char *str);
  */
 void posix_putch(void *data, char ch, bool is_last);
 
-/**
- * @brief Prepare a request packet with header and CRC
- *
- * This function fills the packet header fields including prefix, length,
- * sequence number, and computes the CRC over the payload.
- *
- * @param request Pointer to the packet to prepare
- * @param seq Sequence number for this packet
- * @param len Length of the payload
- * @return RESULT_OK on success
- */
-int prepare_request(packet_t *request, u16 seq, size_t len);
-
-/**
- * @brief Validate a replay/response packet from server
- *
- * This function checks if the packet prefix and CRC are correct.
- * It also prints the result returned by the server.
- *
- * @param replay Pointer to the received packet
- * @return RESULT_OK if packet is valid,
- *         RESULT_BAD_PREFIX_ERROR if prefix mismatch,
- *         RESULT_BAD_CRC_ERROR if CRC mismatch
- */
-int validate_replay(packet_t *replay);
-
 static inline u64 now_ns(void)
 {
     struct timespec ts;

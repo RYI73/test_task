@@ -65,7 +65,6 @@
 #define WIFI_PASS                   "YOUR_PASSWORD"
 
 /* ===================== GLOBALS ===================== */
-static SemaphoreHandle_t spi_mutex;
 static EventGroupHandle_t wifi_event_group;
 
 static uint8_t spi_rx_buf[PKT_LEN*2];
@@ -509,8 +508,6 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
-
-    spi_mutex = xSemaphoreCreateMutex();
 
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
