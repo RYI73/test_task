@@ -25,6 +25,7 @@
 #include "logs.h"
 #include "socket_helpers.h"
 #include "helpers.h"
+#include "protocol.h"
 
 /**
  * @brief Global flag controlling main loop execution.
@@ -147,8 +148,8 @@ int main(void)
                 }
 
                 if (pfds[i].revents & POLLIN) {
-                    char buf[PACKET_SIZE];
-                    ssize_t n = recv(pfds[i].fd, buf, sizeof(buf) - 1, 0);
+                    packet_t replay = {0};
+                    ssize_t n = recv(pfds[i].fd, replay.buffer, sizeof(replay.buffer) - 1, 0);
 
                     if (n <= 0) {
                         if (n < 0) {
@@ -159,13 +160,15 @@ int main(void)
                         continue;
                     }
 
-                    buf[n] = '\0';
+                    /* Validate reply */
+                    if (isOk(validate_replay(&replay))) {
+                        log_msg(LOG_DEBUG, "Server received: '%s'", replay.packet.data);
+                        if (strcmp(buf, EXPECTED_STRING) == 0)
+                            send(pfds[i].fd, OK_REPLY, strlen(OK_REPLY), 0);
+                        else
+                            send(pfds[i].fd, ERR_REPLY, strlen(ERR_REPLY), 0);
+                    }
 
-                    log_msg(LOG_DEBUG, "Server received: '%s'", buf);
-                    if (strcmp(buf, EXPECTED_STRING) == 0)
-                        send(pfds[i].fd, OK_REPLY, strlen(OK_REPLY), 0);
-                    else
-                        send(pfds[i].fd, ERR_REPLY, strlen(ERR_REPLY), 0);
 
                     socket_close(pfds[i].fd);
                     pfds[i].fd = -1;

@@ -25,7 +25,7 @@
 #include "defines.h"
 #include "defaults.h"
 #include "error_code.h"
-//#include "logs.h"
+#include "protocol.h"
 
 static pthread_mutex_t lock;
 
@@ -217,5 +217,41 @@ u16 crc16(const u8 * __restrict data, u32 length)
     }
 
     return crc;
+}
+/***********************************************************************************************/
+int prepare_request(packet_t *request, u16 seq, size_t len)
+{
+    int result = RESULT_OK;
+
+    request->packet.header.prefix = PACK_PREFIX;
+    request->packet.header.len = len;
+    request->packet.header.sequence = seq;
+    request->packet.header.crc = crc16(request->buffer + PACKET_HEADER_CRC_OFFSET, len + PACKET_HEADER_CRC_SIZE);
+    request->packet.header.result = 0;
+
+    return result;
+}
+/***********************************************************************************************/
+int validate_replay(packet_t *replay)
+{
+    int result = RESULT_OK;
+
+    do {
+        if (replay->packet.header.prefix != PACK_PREFIX) {
+            result = RESULT_BAD_PREFIX_ERROR;
+            break;
+        }
+        if (replay->packet.header.crc != crc16(replay->buffer + PACKET_HEADER_CRC_OFFSET, replay->packet.header.len + PACKET_HEADER_CRC_SIZE)) {
+            result = RESULT_BAD_CRC_ERROR;
+            break;
+        }
+
+    } while(0);
+
+    if (!isOk(result)) {
+        print_string("❌ broken package. error %u\n", result);
+    }
+
+    return result;
 }
 /***********************************************************************************************/

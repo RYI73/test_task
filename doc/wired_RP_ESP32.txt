@@ -1,7 +1,10 @@
-| RP Zero Pin | RP Zero Name | ESP32-CAM Pin | ESP32-CAM Name | Напрямок/Примітка      |
-| ----------- | ------------ | ------------- | -------------- | ---------------------- |
-| Pin 19      | MOSI         | IO13          | MOSI           | Master → Slave         |
-| Pin 21      | MISO         | IO12          | MISO           | Slave → Master         |
-| Pin 23      | SCLK         | IO14          | SCLK           | Clock від Master       |
-| Pin 24      | CE0 / CS0    | IO15          | CS / SS        | Chip Select від Master |
-| Pin 6       | GND          | GND           | GND            | Загальний GND          |
++---------------------------------------------------------------------------------------+
+| RP Zero Pin | RP Zero Name  | ESP32-CAM Pin | ESP32-CAM Name | Direction/Note         |
+| ----------- | ------------- | ------------- | -------------- | ---------------------- |
+| Pin 19      | MOSI          | IO13          | MOSI           | Master -> Slave        |
+| Pin 21      | MISO          | IO12          | MISO           | Slave -> Master        |
+| Pin 23      | SCLK          | IO14          | SCLK           | Clock of Master        |
+| Pin 24      | CE0 / CS0     | IO15          | CS / SS        | Chip Select of Master  |
+| Pin 22      | SPI_HANDSHAKE | IO16          | GPIO16         | SPI Handshake GPIO     |
+| Pin 6       | GND           | GND           | GND            | GND                    |
++---------------------------------------------------------------------------------------+

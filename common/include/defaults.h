@@ -18,14 +18,14 @@
 /** TUN IPv4 address (string form) */
 #define TUN_ADDR                                "10.0.0.1"
 /** Server IPv4 address (string form) */
-//#define SERVER_ADDR                             "192.168.1.122"
-#define SERVER_ADDR                             "10.0.0.2"
+#define SERVER_ADDR                             "192.168.1.122"
+//#define SERVER_ADDR                             "10.0.0.2"
 /** Server TCP port */
 #define SERVER_PORT                             (12345)
 /** Message sent to server */
-#define CLIENT_MESSAGE                          "HELLO"
+#define CLIENT_MESSAGE                          "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Curabitur vel sapien eget sapien gravida ornare."
 /** Maximum size of packet */
-#define PACKET_SIZE                             (1024)
+#define PACKET_SIZE                             (128)
 /** Maximum number of concurrent clients */
 #define MAX_CLIENTS                             (5)
 /** poll() timeout in milliseconds */
@@ -34,7 +34,7 @@
 /** Expected message from client */
 #define EXPECTED_STRING                         "HELLO"
 /** Reply sent on successful match */
-#define OK_REPLY                                "OK"
+#define OK_REPLY                                "SUCCESS"
 /** Reply sent on mismatch */
 #define ERR_REPLY                               "ERROR"
 /***********************************************************************************************/

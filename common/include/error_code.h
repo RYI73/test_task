@@ -25,7 +25,7 @@ enum {
     RESULT_FILE_POLL_ERROR,
 
     /* SOCKET ERRORS */
-    RESULT_SOCKET_CREATE_ERROR = 400,
+    RESULT_SOCKET_CREATE_ERROR = 200,
     RESULT_SOCKET_CLOSE_ERROR,
     RESULT_SOCKET_CONNECT_ERROR,
     RESULT_SOCKET_BIND_ERROR,
@@ -41,5 +41,8 @@ enum {
     RESULT_SOCKET_ERROR,
     RESULT_POLL_ERROR,
 
+    /* PACKET ERRORS */
+    RESULT_BAD_PREFIX_ERROR = 300,
+    RESULT_BAD_CRC_ERROR,
 };
 /***********************************************************************************************/

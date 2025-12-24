@@ -34,6 +34,7 @@
 
 /***********************************************************************************************/
 static struct cli cli;
+static u16 sequence = 0;
 /***********************************************************************************************/
 commands_t commands[] = {
     {"status_get",      cmd_status_get,             "Get client status."},
@@ -97,7 +98,8 @@ void cmd_usage(void)
     }
 }
 /***********************************************************************************************/
-static int eprintf(const char *str, ...) {
+static int eprintf(const char *str, ...)
+{
     va_list ap;
     va_start(ap, str);
     vfprintf(stderr, str, ap);
@@ -143,7 +145,9 @@ void cmd_send_string(int cli_argc, const char **cli_argv)
 {
     const char *direct = CLIENT_MESSAGE;
     int sockfd = -1;
-    char recv_buf[PACKET_SIZE];
+    size_t len = 0;
+    packet_t request = {0};
+    packet_t replay = {0};
     int result = RESULT_OK;
 
     struct option_entry entries[] = {
@@ -161,24 +165,37 @@ void cmd_send_string(int cli_argc, const char **cli_argv)
                 break;
             }
 
+            len = PACKET_DATA_SIZE < strlen(direct) ? PACKET_DATA_SIZE : strlen(direct);
+
+            /* Prepare packet to server */
+            prepare_request(&request, sequence++, len);
+            memcpy(request.packet.data, direct, len);
+            request.packet.header.type = PACKET_TYPE_STRING;
+
             /* Send message to server */
-            result = socket_send_data(sockfd, (void*)direct, strlen(direct));
+            result = socket_send_data(sockfd, (void*)request.buffer, len + PACKET_HEADER_SIZE);
             if (!isOk(result)) {
                 log_msg(LOG_ERR, "❌ send failed");
             }
 
+
             /* Receive reply */
-            ssize_t received = sizeof(recv_buf);
-            result = socket_read_data(sockfd, recv_buf, &received, SOCKET_READ_TIMEOUT_MS);
-            if (!isOk(result)) {
+            ssize_t received = sizeof(replay.buffer);
+            result = socket_read_data(sockfd, replay.buffer, &received, SOCKET_READ_TIMEOUT_MS);
+            if (!isOk(result) || received == 0) {
                 log_msg(LOG_ERR, "❌ recv failed");
                 break;
             }
 
-            recv_buf[received] = '\0';
-
-            /* Print server response */
-            print_string("Server reply: %s\n", recv_buf);
+            /* Validate reply */
+            if (isOk(validate_replay(&replay))) {
+                if (isOk(replay.packet.header.result)) {
+                    print_string("Server responded: %s\n",  OK_REPLY);
+                }
+                else {
+                    print_string("Server returned an error %u\n",  replay.packet.header.result);
+                }
+            }
 
         } while(0);
 
