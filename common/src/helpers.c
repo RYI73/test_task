@@ -20,12 +20,13 @@
 #include <math.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <ctype.h>
 
 #include "helpers.h"
 #include "defines.h"
 #include "defaults.h"
 #include "error_code.h"
-//#include "logs.h"
+#include "protocol.h"
 
 static pthread_mutex_t lock;
 
@@ -217,5 +218,74 @@ u16 crc16(const u8 * __restrict data, u32 length)
     }
 
     return crc;
+}
+/***********************************************************************************************/
+int hexstr_to_bytes(const char *str, uint8_t *out, size_t max_out, size_t *count)
+{
+    int result = RESULT_OK;
+    *count = 0;
+
+    while (*str) {
+        while (*str == ' ' || *str == '\t')
+            str++;
+
+        if (*str == '\0')
+            break;
+
+        if (!isxdigit((unsigned char)str[0]) ||
+            !isxdigit((unsigned char)str[1])) {
+            return RESULT_ARGUMENT_ERROR;
+        }
+
+        if (*count >= max_out) {
+            return RESULT_FULL_BUFFER_ERROR;
+        }
+
+        uint8_t byte = 0;
+        for (int i = 0; i < 2; i++) {
+            byte <<= 4;
+            char c = *str++;
+
+            if (c >= '0' && c <= '9') byte |= (c - '0');
+            else if (c >= 'A' && c <= 'F') byte |= (c - 'A' + 10);
+            else if (c >= 'a' && c <= 'f') byte |= (c - 'a' + 10);
+        }
+
+        out[(*count)++] = byte;
+    }
+
+    return result;
+}
+/***********************************************************************************************/
+int bytes_to_hexstr(const uint8_t *data, size_t len, char *out, size_t out_size)
+{
+    int result = RESULT_OK;
+
+    if (!data || !out || out_size == 0)
+        return RESULT_ARGUMENT_ERROR;
+
+    static const char hex[] = "0123456789ABCDEF";
+
+    size_t pos = 0;
+
+    for (size_t i = 0; i < len; i++) {
+
+        if (pos + 2 >= out_size)
+            break;
+
+        out[pos++] = hex[(data[i] >> 4) & 0x0F];
+        out[pos++] = hex[data[i] & 0x0F];
+
+        /* пробіл тільки якщо влазить */
+        if (i != len - 1) {
+            if (pos + 1 >= out_size)
+                break;
+            out[pos++] = ' ';
+        }
+    }
+
+    out[pos] = '\0';
+
+    return result;
 }
 /***********************************************************************************************/

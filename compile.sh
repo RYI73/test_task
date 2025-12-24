@@ -1,7 +1,5 @@
 #!/bin/bash
 
-echo "Compile with UID=${LOCAL_USER_ID} GID=${LOCAL_GROUP_ID} HOME=${LOCAL_HOME_PATH}"
-
 result1=0
 result2=0
 

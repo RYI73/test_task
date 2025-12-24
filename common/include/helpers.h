@@ -122,6 +122,9 @@ char *strupr(char *str);
  */
 void posix_putch(void *data, char ch, bool is_last);
 
+int hexstr_to_bytes(const char *str, uint8_t *out, size_t max_out, size_t *count);
+int bytes_to_hexstr(const uint8_t *data, size_t len, char *out, size_t out_size);
+
 static inline u64 now_ns(void)
 {
     struct timespec ts;

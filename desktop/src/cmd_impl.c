@@ -34,11 +34,12 @@
 
 /***********************************************************************************************/
 static struct cli cli;
+static u16 sequence = 0x10;
 /***********************************************************************************************/
 commands_t commands[] = {
-    {"status_get",      cmd_status_get,             "Get client status."},
     {"send_str",        cmd_send_string,            "Send string to server."},
-    {"exit",            cmd_empty,                  "Exit from ark-modem (or press Ctrl-D)."}
+    {"send_bin",        cmd_send_buinary,           "Send binary array to server."},
+    {"exit",            cmd_empty,                  "Exit from testtask (or press Ctrl-D)."}
 };
 /***********************************************************************************************/
 void cmd_init(const char *prompt,
@@ -48,6 +49,7 @@ void cmd_init(const char *prompt,
 {
     cli_init(&cli, prompt, put_char, cb_data);
     print_logo();
+    cmd_usage();
     cli_prompt(&cli);
 }
 /***********************************************************************************************/
@@ -97,7 +99,8 @@ void cmd_usage(void)
     }
 }
 /***********************************************************************************************/
-static int eprintf(const char *str, ...) {
+static int eprintf(const char *str, ...)
+{
     va_list ap;
     va_start(ap, str);
     vfprintf(stderr, str, ap);
@@ -128,26 +131,19 @@ void cmd_empty(int cli_argc, const char **cli_argv)
     UNUSED(cli_argv);
 }
 /***********************************************************************************************/
-void cmd_status_get(int cli_argc, const char **cli_argv)
-{
-    UNUSED(cli_argc);
-    UNUSED(cli_argv);
-
-    const char client_mode[] = "Client mode"DOTS;
-    u8 is_connected = 0;
-
-    print_string("%-.*s%s\n", STATUS_NAME_SIZE, client_mode, is_connected?"Connected":"Disconnected");
-}
-/***********************************************************************************************/
 void cmd_send_string(int cli_argc, const char **cli_argv)
 {
-    const char *direct = CLIENT_MESSAGE;
+    const char *message = CLIENT_MESSAGE;
+    bool wrong_string_mode = false;
     int sockfd = -1;
-    char recv_buf[PACKET_SIZE];
+    size_t len = 0;
+    packet_t request = {0};
+    packet_t replay = {0};
     int result = RESULT_OK;
 
     struct option_entry entries[] = {
-        {"string", 's', "Enter string for sending", OPTION_FLAG_string, .string = &direct},
+        {"string", 's', "Enter string for sending", OPTION_FLAG_string, .string = &message},
+        {"wrong", 'w', "Send wrong string for testing (Enable: 1, true, t, on, yes)", OPTION_FLAG_bool, .boolean = &wrong_string_mode},
         {NULL, 0, NULL, 0, .boolean=false},
     };
     int extra_args = opt_parse(cli_argc, cli_argv, entries);
@@ -161,24 +157,45 @@ void cmd_send_string(int cli_argc, const char **cli_argv)
                 break;
             }
 
+            if (wrong_string_mode) {
+                message = WRONG_MESSAGE;
+            }
+
+            len = PACKET_DATA_SIZE < strlen(message) ? PACKET_DATA_SIZE : strlen(message);
+
+            /* Prepare packet to server */
+            memcpy(request.packet.data, message, len);
+            request.packet.header.type = PACKET_TYPE_STRING;
+            protocol_packet_prepare(&request, sequence++, len);
+
             /* Send message to server */
-            result = socket_send_data(sockfd, (void*)direct, strlen(direct));
+            result = socket_send_data(sockfd, (void*)request.buffer, len + PACKET_HEADER_SIZE);
             if (!isOk(result)) {
-                log_msg(LOG_ERR, "❌ send failed");
+                log_msg(LOG_ERR, "❌ Client send failed");
             }
 
             /* Receive reply */
-            ssize_t received = sizeof(recv_buf);
-            result = socket_read_data(sockfd, recv_buf, &received, SOCKET_READ_TIMEOUT_MS);
-            if (!isOk(result)) {
-                log_msg(LOG_ERR, "❌ recv failed");
+            ssize_t received = sizeof(replay.buffer);
+            result = socket_read_data(sockfd, replay.buffer, &received, SOCKET_READ_TIMEOUT_MS);
+            if (!isOk(result) || received == 0) {
+                log_msg(LOG_ERR, "❌ Client recv failed");
                 break;
             }
 
-            recv_buf[received] = '\0';
-
-            /* Print server response */
-            print_string("Server reply: %s\n", recv_buf);
+            /* Validate reply */
+            if (isOk(protocol_packet_validate(&replay))) {
+                if (replay.packet.header.type == PACKET_TYPE_ANSWER) {
+                    if (isOk(replay.packet.header.answer_result)) {
+                        print_string("Server responded OK on packet %u\n",  replay.packet.header.answer_sequence);
+                    }
+                    else {
+                        print_string("Server returned an error %u on packet %u\n",  replay.packet.header.answer_result, replay.packet.header.answer_sequence);
+                    }
+                }
+                else {
+                    print_string("Server responded with unknown type: %u\n",  replay.packet.header.type);
+                }
+            }
 
         } while(0);
 
@@ -188,6 +205,90 @@ void cmd_send_string(int cli_argc, const char **cli_argv)
 
     }
 
+
+    socket_close(sockfd);
+}
+/***********************************************************************************************/
+void cmd_send_buinary(int cli_argc, const char **cli_argv)
+{
+    const uint8_t array_good_bin[] = CLIENT_ARRAY;
+    const uint8_t array_wrong_bin[] = WRONG_ARRAY;
+    const uint8_t *array_bin = array_good_bin;
+    const char *binary_str = NULL;
+    uint8_t array[64] = {0};
+    bool wrong_bin_mode = false;
+    int sockfd = -1;
+    size_t len = 0;
+    packet_t request = {0};
+    packet_t replay = {0};
+    int result = RESULT_OK;
+
+    struct option_entry entries[] = {
+        {"binary", 'b', "Enter binary in format: \"1A 23 FD 08 17 3C\"", OPTION_FLAG_string, .string = &binary_str},
+        {"wrong", 'w', "Send wrong string for testing (Enable: 1, true, t, on, yes)", OPTION_FLAG_bool, .boolean = &wrong_bin_mode},
+        {NULL, 0, NULL, 0, .boolean=false},
+    };
+    int extra_args = opt_parse(cli_argc, cli_argv, entries);
+    if (extra_args < 0) {
+        opt_parse_usage(eprintf, cli_argv[0], entries);
+    }
+    else {
+        do {
+            result = socket_tcp_client_create(&sockfd, 0, 0, SERVER_ADDR, SERVER_PORT);
+            if (!isOk(result)) {
+                break;
+            }
+
+            len = sizeof(array_good_bin);
+            if (binary_str != NULL && isOk(hexstr_to_bytes(binary_str, array, sizeof(array), &len))) {
+                array_bin = array;
+            }
+            else if (wrong_bin_mode) {
+                array_bin = array_wrong_bin;
+                len = sizeof(array_wrong_bin);
+            }
+
+            /* Prepare packet to server */
+            memcpy(request.packet.data, array_bin, len);
+            request.packet.header.type = PACKET_TYPE_ARRAY;
+            protocol_packet_prepare(&request, sequence++, len);
+
+            /* Send message to server */
+            result = socket_send_data(sockfd, (void*)request.buffer, len + PACKET_HEADER_SIZE);
+            if (!isOk(result)) {
+                log_msg(LOG_ERR, "❌ Client send failed");
+            }
+
+            /* Receive reply */
+            ssize_t received = sizeof(replay.buffer);
+            result = socket_read_data(sockfd, replay.buffer, &received, SOCKET_READ_TIMEOUT_MS);
+            if (!isOk(result) || received == 0) {
+                log_msg(LOG_ERR, "❌ Client recv failed");
+                break;
+            }
+
+            /* Validate reply */
+            if (isOk(protocol_packet_validate(&replay))) {
+                if (replay.packet.header.type == PACKET_TYPE_ANSWER) {
+                    if (isOk(replay.packet.header.answer_result)) {
+                        print_string("Server responded OK on packet %u\n",  replay.packet.header.answer_sequence);
+                    }
+                    else {
+                        print_string("Server returned an error %u on packet %u\n",  replay.packet.header.answer_result, replay.packet.header.answer_sequence);
+                    }
+                }
+                else {
+                    print_string("Server responded with unknown type: %u\n",  replay.packet.header.type);
+                }
+            }
+
+        } while(0);
+
+        if (!isOk(result)) {
+            print_string("❌ Server not responding\n");
+        }
+
+    }
 
     socket_close(sockfd);
 }

@@ -5,6 +5,9 @@
  * The server listens on a predefined port, accepts up to MAX_CLIENTS connections,
  * compares received messages with a predefined string, and replies with "OK" or
  * "ERROR". All errors are logged to syslog.
+ *
+ * @author Ruslan
+ * @date 2025-12-24
  */
 
 #include <stdio.h>
@@ -25,6 +28,9 @@
 #include "logs.h"
 #include "socket_helpers.h"
 #include "helpers.h"
+#include "protocol.h"
+
+static u16 sequence = 0x20;
 
 /**
  * @brief Global flag controlling main loop execution.
@@ -77,6 +83,10 @@ int main(void)
     int listen_fd = -1;
     struct pollfd pfds[MAX_CLIENTS + 1];
     int result = RESULT_OK;
+    int res_pack = RESULT_OK;
+    size_t len = 0;
+    packet_t request = {0};
+    packet_t replay = {0};
 
     do {
         /* Initialize syslog */
@@ -114,7 +124,7 @@ int main(void)
             if (ret < 0) {
                 if (errno == EINTR)
                     continue;
-                log_msg(LOG_ERR, "poll failed: %s", strerror(errno));
+                log_msg(LOG_ERR, "❌ Server poll failed: %s", strerror(errno));
                 break;
             }
 
@@ -122,7 +132,7 @@ int main(void)
             if (pfds[0].revents & POLLIN) {
                 int client_fd = accept(listen_fd, NULL, NULL);
                 if (client_fd < 0) {
-                    log_msg(LOG_ERR, "accept failed: %s", strerror(errno));
+                    log_msg(LOG_ERR, "❌ Server accept failed: %s", strerror(errno));
                 } else {
                     int slot = find_free_slot(pfds);
                     if (slot < 0) {
@@ -147,25 +157,62 @@ int main(void)
                 }
 
                 if (pfds[i].revents & POLLIN) {
-                    char buf[PACKET_SIZE];
-                    ssize_t n = recv(pfds[i].fd, buf, sizeof(buf) - 1, 0);
-
-                    if (n <= 0) {
-                        if (n < 0) {
-                            log_msg(LOG_ERR, "recv failed: %s", strerror(errno));
-                        }
+                    memset(request.buffer, 0, sizeof(request.buffer));
+                    memset(replay.buffer, 0, sizeof(request.buffer));
+//                    ssize_t n = recv(pfds[i].fd, request.buffer, sizeof(request.buffer), 0);
+                    /* Receive reply */
+                    ssize_t received = sizeof(request.buffer);
+                    result = socket_read_data(pfds[i].fd, request.buffer, &received, SOCKET_READ_TIMEOUT_MS);
+                    if (!isOk(result) || received == 0) {
+                        log_msg(LOG_ERR, "❌ Server recv failed");
                         socket_close(pfds[i].fd);
                         pfds[i].fd = -1;
                         continue;
                     }
 
-                    buf[n] = '\0';
+                    char str[32];
+                    const char array_good_bin[] = CLIENT_ARRAY;
+                    res_pack = RESULT_OK;
+                    /* Validate reply */
+                    res_pack = protocol_packet_validate(&request);
+                    if (isOk(res_pack)) {
+                        switch (request.packet.header.type) {
+                        case PACKET_TYPE_STRING:
+                            log_msg(LOG_DEBUG, "Server received: '%.32s%s'", request.packet.data, strlen(request.packet.data) > 32 ? "..." : "");
+                            len = strlen(request.packet.data);
+                            if (strlen(request.packet.data) < strlen(CLIENT_MESSAGE) || memcmp(request.packet.data, CLIENT_MESSAGE, len) != 0) {
+                                res_pack = RESULT_BROKEN_MSG_ERROR;
+                            }
+                            break;
+                        case PACKET_TYPE_ARRAY:
+                            bytes_to_hexstr(request.packet.data, request.packet.header.len, str, sizeof(str));
+                            log_msg(LOG_DEBUG, "Server received: %.32s", str);
+                            if (memcmp(request.packet.data, array_good_bin, sizeof(array_good_bin)) != 0) {
+                                res_pack = RESULT_BROKEN_MSG_ERROR;
+                            }
+                            break;
+                        default:
+                            res_pack = RESULT_TYPE_UNKNOWN_ERROR;
+                            log_msg(LOG_DEBUG, "Server received unknown type of packed: %u", request.packet.header.type);
+                            break;
+                        }
 
-                    log_msg(LOG_DEBUG, "Server received: '%s'", buf);
-                    if (strcmp(buf, EXPECTED_STRING) == 0)
-                        send(pfds[i].fd, OK_REPLY, strlen(OK_REPLY), 0);
-                    else
-                        send(pfds[i].fd, ERR_REPLY, strlen(ERR_REPLY), 0);
+                    }
+                    else {
+                        log_msg(LOG_WARNING, "Server received broken packet");
+                    }
+
+                    /* Prepare packet to server */
+                    replay.packet.header.type = PACKET_TYPE_ANSWER;
+                    replay.packet.header.answer_sequence = request.packet.header.sequence;
+                    replay.packet.header.answer_result = res_pack;
+                    protocol_packet_prepare(&replay, sequence++, 0);
+
+                    /* Send message to server */
+                    result = socket_send_data(pfds[i].fd, (void*)replay.buffer, PACKET_HEADER_SIZE);
+                    if (!isOk(result)) {
+                        log_msg(LOG_ERR, "❌ Server send failed");
+                    }
 
                     socket_close(pfds[i].fd);
                     pfds[i].fd = -1;
