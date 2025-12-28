@@ -321,7 +321,6 @@ int spi_recv_transfer(int spi_fd, uint8_t *out)
         return -1;
 
     memset(spi_recv_tx_buff, 0, PKT_LEN);
-    start = now_ms();
     struct spi_ioc_transfer tr = {
         .tx_buf        = (unsigned long)spi_recv_tx_buff,
         .rx_buf        = (unsigned long)spi_recv_rx_buff,
@@ -331,11 +330,12 @@ int spi_recv_transfer(int spi_fd, uint8_t *out)
         .cs_change     = 0,
     };
 
+    start = now_ms();
     while (1) {
         lseek(gpio_fd, 0, SEEK_SET);
         read(gpio_fd, &gpio_value, 1);
         if (gpio_value == '1') break;   // ESP32 READY
-        if (now_ms() - start >= 100) {
+        if (now_ms() - start >= 500) {
             is_timeout = true;
             break;
         }
@@ -357,6 +357,18 @@ int spi_recv_transfer(int spi_fd, uint8_t *out)
 //                printf("%02x ", out[i]);
 //            }
 //            printf("\n");
+            start = now_ms();
+            while (1) {
+                lseek(gpio_fd, 0, SEEK_SET);
+                read(gpio_fd, &gpio_value, 1);
+                if (gpio_value == '0') break;   // ESP32 READY
+                if (now_ms() - start >= 500) {
+                    is_timeout = true;
+                    break;
+                }
+                usleep(100);
+            }
+
         }
     }
     else {
@@ -548,7 +560,7 @@ void forward_loop(int tun_fd, int spi_fd)
                 }
                 // [DEBUG] End
 
-                usleep(100000);
+//                usleep(100000);
                 // Forward to SPI
                 spi_send_packet(spi_fd, tun_buf, n);
             } else if (ip_version == 6) {

@@ -164,13 +164,13 @@ static void spi_ipv4_forward(const uint8_t *buf, size_t len)
 
     struct ip_hdr *iph = (struct ip_hdr *)buf;
     if (IPH_V(iph) != 4) {
-        ESP_LOGW(TAG, "Not IPv4");
+        ESP_LOGI(TAG, "Not IPv4");
         return;
     }
 
     uint16_t ip_hlen = IPH_HL_BYTES(iph);
     if (ip_hlen < sizeof(struct ip_hdr) || ip_hlen > len) {
-        ESP_LOGW(TAG, "Bad IP header length");
+        ESP_LOGI(TAG, "Bad IP header length");
         return;
     }
 
@@ -179,7 +179,7 @@ static void spi_ipv4_forward(const uint8_t *buf, size_t len)
 
     struct pbuf *q = pbuf_alloc(PBUF_TRANSPORT, l4_len, PBUF_RAM);
     if (!q) {
-        ESP_LOGE(TAG, "pbuf_alloc failed");
+        ESP_LOGI(TAG, "pbuf_alloc failed");
         return;
     }
 
@@ -221,10 +221,10 @@ static void spi_slave_init(void)
 
     ESP_ERROR_CHECK(spi_slave_initialize(SPI_HOST, &buscfg, &slvcfg, SPI_DMA_CH_AUTO));
 
-    send_tx_buf = spi_bus_dma_memory_alloc(SPI_HOST, PKT_LEN+1, 0);
-    send_rx_buf = spi_bus_dma_memory_alloc(SPI_HOST, PKT_LEN+1, 0);
-    recv_tx_buf = spi_bus_dma_memory_alloc(SPI_HOST, PKT_LEN+1, 0);
-    recv_rx_buf = spi_bus_dma_memory_alloc(SPI_HOST, PKT_LEN+1, 0);
+    send_tx_buf = spi_bus_dma_memory_alloc(SPI_HOST, PKT_LEN*2, 0);
+    send_rx_buf = spi_bus_dma_memory_alloc(SPI_HOST, PKT_LEN*2, 0);
+    recv_tx_buf = spi_bus_dma_memory_alloc(SPI_HOST, PKT_LEN*2, 0);
+    recv_rx_buf = spi_bus_dma_memory_alloc(SPI_HOST, PKT_LEN*2, 0);
     assert(send_tx_buf && send_rx_buf && recv_tx_buf && recv_rx_buf);
 
     ESP_LOGI(TAG, "SPI slave initialized");
@@ -482,10 +482,10 @@ static void spi_rx_task(void *arg)
 
     uint8_t buf[PKT_LEN*2];
     uint16_t length = 0;
-    spi_pkt_t tx_pkt;
+    spi_pkt_t tx_pkt = {0};
 
     while (1) {
-        if (spi_recv_ip(buf, &length, 100) == ESP_OK && length != 0) {
+        if (spi_recv_ip(buf, &length, pdMS_TO_TICKS(1000)) == ESP_OK && length != 0) {
             ESP_LOGI(TAG, "\nReceived valid SPI packet (%d bytes):", length);
 //            dump_bytes(buf, length);
             spi_ipv4_forward(buf, length);
