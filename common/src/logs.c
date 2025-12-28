@@ -1,4 +1,4 @@
-#define DEBUG 1
+//#define DEBUG 1
 
 #include "logs.h"
 #include "helpers.h"

@@ -263,16 +263,15 @@ int spi_send_transfer(int spi_fd, const uint8_t *data, size_t len)
         return -1;
 
     /* DEBUG dump */
-    printf("\nSPI transfer %zu bytes:", len);
-    for (size_t i = 0; i < len; i++) {
-        if (i % 16 == 0) printf("\n%04zx: ", i);
-        printf("%02x ", data[i]);
-    }
-    printf("\n");
+//    printf("\nSPI transfer %zu bytes:", len);
+//    for (size_t i = 0; i < len; i++) {
+//        if (i % 16 == 0) printf("\n%04zx: ", i);
+//        printf("%02x ", data[i]);
+//    }
+//    printf("\n");
 
     memcpy(spi_send_tx_buff, data, len);
 
-    start = now_ms();
     struct spi_ioc_transfer tr = {
         .tx_buf        = (unsigned long)spi_send_tx_buff,
         .rx_buf        = (unsigned long)spi_send_rx_buff,
@@ -282,6 +281,7 @@ int spi_send_transfer(int spi_fd, const uint8_t *data, size_t len)
         .cs_change     = 0,
     };
 
+    start = now_ms();
     while (1) {
         lseek(gpio_fd, 0, SEEK_SET);
         read(gpio_fd, &gpio_value, 1);
@@ -357,18 +357,6 @@ int spi_recv_transfer(int spi_fd, uint8_t *out)
 //                printf("%02x ", out[i]);
 //            }
 //            printf("\n");
-            start = now_ms();
-            while (1) {
-                lseek(gpio_fd, 0, SEEK_SET);
-                read(gpio_fd, &gpio_value, 1);
-                if (gpio_value == '0') break;   // ESP32 READY
-                if (now_ms() - start >= 500) {
-                    is_timeout = true;
-                    break;
-                }
-                usleep(100);
-            }
-
         }
     }
     else {
@@ -449,12 +437,12 @@ int spi_send_packet(int spi_fd, uint8_t *data, uint16_t len)
     memcpy(buf + offset, &crc, sizeof(crc));
 
     // [DEBUG] Dump packet ONLY FOR DEBUG!!!
-    printf("SPI Send %zd bytes\n", offset + sizeof(crc));
-    for (ssize_t i = 0; i < offset + sizeof(crc); i++) {
-        if (i % 16 == 0) printf("\n%04zx: ", i);
-        printf("%02x ", buf[i]);
-    }
-    printf("\n");
+//    printf("SPI Send %zd bytes\n", offset + sizeof(crc));
+//    for (ssize_t i = 0; i < offset + sizeof(crc); i++) {
+//        if (i % 16 == 0) printf("\n%04zx: ", i);
+//        printf("%02x ", buf[i]);
+//    }
+//    printf("\n");
     // [DEBUG] End
 
     if (spi_send_transfer(spi_fd, buf, sizeof(buf)) < 0) return -1;
@@ -549,15 +537,15 @@ void forward_loop(int tun_fd, int spi_fd)
             if (ip_version == 4) {
 
                 // [DEBUG] Dump packet ONLY FOR DEBUG!!!
-                printf("Received %zd bytes from TUN (IPv4)\n", n);
-                for (ssize_t i = 0; i < n; i++) {
-                    if (i % 16 == 0) printf("\n%04zx: ", i);
-                    printf("%02x ", tun_buf[i]);
-                }
-                printf("\n");
-                if (n >= 21 && tun_buf[20] == 0) {
-                    printf("This is ICMP Echo Reply\n");
-                }
+//                printf("Received %zd bytes from TUN (IPv4)\n", n);
+//                for (ssize_t i = 0; i < n; i++) {
+//                    if (i % 16 == 0) printf("\n%04zx: ", i);
+//                    printf("%02x ", tun_buf[i]);
+//                }
+//                printf("\n");
+//                if (n >= 21 && tun_buf[20] == 0) {
+//                    printf("This is ICMP Echo Reply\n");
+//                }
                 // [DEBUG] End
 
 //                usleep(100000);
@@ -575,12 +563,12 @@ void forward_loop(int tun_fd, int spi_fd)
         if (!spi_receive(spi_fd, spi_rx, &length)) {
 
             // [DEBUG] Dump packet ONLY FOR DEBUG!!!
-            printf("\nReceived valid SPI packet (%d bytes):", length);
-            for (int i = 0; i < length; i++) {
-                if (i % 16 == 0) printf("\n%04x: ", i);
-                printf("%02x ", spi_rx[i]);
-            }
-            printf("\n");
+//            printf("\nReceived valid SPI packet (%d bytes):", length);
+//            for (int i = 0; i < length; i++) {
+//                if (i % 16 == 0) printf("\n%04x: ", i);
+//                printf("%02x ", spi_rx[i]);
+//            }
+//            printf("\n");
             // [DEBUG] End
 
             write_tun_packet(tun_fd, spi_rx, length);

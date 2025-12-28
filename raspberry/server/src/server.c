@@ -127,7 +127,7 @@ int main(void)
                 log_msg(LOG_ERR, "❌ Server poll failed: %s", strerror(errno));
                 break;
             }
-            printf("Server poll OK\n");
+//            printf("Server poll OK\n");
 
             /* Handle new incoming connections */
             if (pfds[0].revents & POLLIN) {
@@ -146,15 +146,15 @@ int main(void)
                 }
             }
 
-            printf("Cickle for all clients OK\n");
+//            printf("Cickle for all clients OK\n");
 
             /* Handle client sockets */
             for (int i = 1; i <= MAX_CLIENTS; i++) {
                 if (pfds[i].fd < 0)
                     continue;
 
-                printf("Client %d fd %d\n", i, pfds[i].fd);
-                printf("revents %X\n", pfds[i].revents);
+//                printf("Client %d fd %d\n", i, pfds[i].fd);
+//                printf("revents %X\n", pfds[i].revents);
                 if (pfds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) {
                     socket_close(pfds[i].fd);
                     pfds[i].fd = -1;
@@ -162,7 +162,7 @@ int main(void)
                 }
 
                 if (pfds[i].revents & POLLIN) {
-                    printf("revents POLLIN\n");
+//                    printf("revents POLLIN\n");
                     memset(request.buffer, 0, sizeof(request.buffer));
                     memset(replay.buffer, 0, sizeof(request.buffer));
 //                    ssize_t n = recv(pfds[i].fd, request.buffer, sizeof(request.buffer), 0);
