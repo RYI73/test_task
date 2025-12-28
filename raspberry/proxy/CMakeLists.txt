@@ -12,4 +12,6 @@ set(SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/proxy.c
 )
 
+set(CMAKE_C_FLAGS_RELEASE "-O3 -march=native -DNDEBUG")
+
 add_executable(${PROJECT_NAME} ${SOURCES})

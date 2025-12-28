@@ -61,8 +61,8 @@
 
 #define SPI_TX_QUEUE_LEN            8
 
-#define WIFI_SSID "Linksys00283"
-#define WIFI_PASS "@Valovyi_Ruslan1973"
+#define WIFI_SSID "D-Link"
+#define WIFI_PASS "12345678"
 
 /* ===================== GLOBALS ===================== */
 static EventGroupHandle_t wifi_event_group;
