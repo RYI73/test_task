@@ -37,6 +37,8 @@ int protocol_packet_prepare(packet_t *packet, u16 seq, size_t len)
     packet->packet.header.sequence = seq;
     packet->packet.header.crc = crc16(packet->buffer + PACKET_HEADER_CRC_OFFSET, len + PACKET_HEADER_CRC_SIZE);
 
+//    print_dump(packet->buffer, len + PACKET_HEADER_SIZE, "protocol_packet_prepare");
+
     return result;
 }
 /***********************************************************************************************/

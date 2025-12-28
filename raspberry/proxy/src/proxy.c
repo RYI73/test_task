@@ -263,7 +263,7 @@ int spi_send_transfer(int spi_fd, const uint8_t *data, size_t len)
         return -1;
 
     /* DEBUG dump */
-    printf("\nSPI SEND %zu bytes:", len);
+    printf("\nSPI transfer %zu bytes:", len);
     for (size_t i = 0; i < len; i++) {
         if (i % 16 == 0) printf("\n%04zx: ", i);
         printf("%02x ", data[i]);
@@ -437,12 +437,12 @@ int spi_send_packet(int spi_fd, uint8_t *data, uint16_t len)
     memcpy(buf + offset, &crc, sizeof(crc));
 
     // [DEBUG] Dump packet ONLY FOR DEBUG!!!
-//    printf("Send %zd bytes to TUN:\n", offset + sizeof(crc));
-//    for (ssize_t i = 0; i < offset + sizeof(crc); i++) {
-//        if (i % 16 == 0) printf("\n%04zx: ", i);
-//        printf("%02x ", buf[i]);
-//    }
-//    printf("\n");
+    printf("SPI Send %zd bytes\n", offset + sizeof(crc));
+    for (ssize_t i = 0; i < offset + sizeof(crc); i++) {
+        if (i % 16 == 0) printf("\n%04zx: ", i);
+        printf("%02x ", buf[i]);
+    }
+    printf("\n");
     // [DEBUG] End
 
     if (spi_send_transfer(spi_fd, buf, sizeof(buf)) < 0) return -1;
@@ -462,7 +462,7 @@ int spi_receive(int spi_fd, uint8_t *out_buf, uint16_t *length)
     memset(rx_buff, 0 ,sizeof(rx_buff));
     if (!spi_recv_transfer(spi_fd, rx_buff)) {
 
-//        // [DEBUG] Dump packet ONLY FOR DEBUG!!!
+        // [DEBUG] Dump packet ONLY FOR DEBUG!!!
 //        printf("MASTER received: ");
 //        for (int i = 0; i < sizeof(rx_buff); i++)
 //            printf("%02x ", rx_buff[i]);
@@ -472,7 +472,7 @@ int spi_receive(int spi_fd, uint8_t *out_buf, uint16_t *length)
         spi_ip_hdr_t *hdr = (spi_ip_hdr_t *)rx_buff;
         uint32_t magic = hdr->magic;
         if (magic != SPI_MAGIC) {
-            printf("Bad magic %08X != %08X\n", magic, SPI_MAGIC);
+//            printf("Bad magic %08X != %08X\n", magic, SPI_MAGIC);
             return -1;
         }
 
@@ -487,6 +487,25 @@ int spi_receive(int spi_fd, uint8_t *out_buf, uint16_t *length)
         memcpy(&recv_crc, payload + pkt_len, sizeof(recv_crc));
         if (recv_crc != crc32(0, payload, pkt_len)) {
             printf("Bad crc\n");
+
+            // [DEBUG] Dump packet ONLY FOR DEBUG!!!
+            printf("MASTER received: ");
+            for (size_t i = 0; i < sizeof(rx_buff); i++) {
+                if (i % 16 == 0) printf("\n%04zx: ", i);
+                printf("%02x ", rx_buff[i]);
+            }
+            printf("\n");
+            // [DEBUG] End
+
+            // [DEBUG] Dump packet ONLY FOR DEBUG!!!
+            printf("Packet: ");
+            for (size_t i = 0; i < pkt_len; i++) {
+                if (i % 16 == 0) printf("\n%04zx: ", i);
+                printf("%02x ", payload[i]);
+            }
+            printf("\n");
+            // [DEBUG] End
+
             return -1;
         }
 

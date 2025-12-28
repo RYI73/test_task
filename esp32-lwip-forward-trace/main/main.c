@@ -47,22 +47,22 @@
 /* ===================== CONFIG ===================== */
 #define TAG                         "L3_ROUTER"
 #define SPI_HOST                    SPI2_HOST
-#define PKT_LEN                     128
+#define PKT_LEN                     256
 #define SPI_MAGIC                   0x49504657   /**< Magic constant ('IPFW') for SPI framing */
 #define SPI_PROTO_VERSION           1
 #define WIFI_GOT_IP_BIT             BIT0
 
 /* SPI GPIOs */
 #define GPIO_SPI_READY              GPIO_NUM_16
-#define GPIO_MOSI                   12
-#define GPIO_MISO                   13
-#define GPIO_SCLK                   15
-#define GPIO_CS                     14
+#define GPIO_MOSI                   13
+#define GPIO_MISO                   12
+#define GPIO_SCLK                   14
+#define GPIO_CS                     15
 
 #define SPI_TX_QUEUE_LEN            8
 
-#define WIFI_SSID                   "YOUR_WIFI_SSID"
-#define WIFI_PASS                   "YOUR_PASSWORD"
+#define WIFI_SSID "Linksys00283"
+#define WIFI_PASS "@Valovyi_Ruslan1973"
 
 /* ===================== GLOBALS ===================== */
 static EventGroupHandle_t wifi_event_group;
@@ -125,7 +125,7 @@ static void gpio_ready_init(void)
 /**
  * @brief Dump memory in hex format (max 128 bytes)
  */
-static void dump_bytes(const uint8_t *buf, int len)
+void dump_bytes(const uint8_t *buf, int len)
 {
     for (int i = 0; i < len && i < 128; i += 16) {
         char line[96];
@@ -221,10 +221,10 @@ static void spi_slave_init(void)
 
     ESP_ERROR_CHECK(spi_slave_initialize(SPI_HOST, &buscfg, &slvcfg, SPI_DMA_CH_AUTO));
 
-    send_tx_buf = spi_bus_dma_memory_alloc(SPI_HOST, 129, 0);
-    send_rx_buf = spi_bus_dma_memory_alloc(SPI_HOST, 129, 0);
-    recv_tx_buf = spi_bus_dma_memory_alloc(SPI_HOST, 129, 0);
-    recv_rx_buf = spi_bus_dma_memory_alloc(SPI_HOST, 129, 0);
+    send_tx_buf = spi_bus_dma_memory_alloc(SPI_HOST, PKT_LEN+1, 0);
+    send_rx_buf = spi_bus_dma_memory_alloc(SPI_HOST, PKT_LEN+1, 0);
+    recv_tx_buf = spi_bus_dma_memory_alloc(SPI_HOST, PKT_LEN+1, 0);
+    recv_rx_buf = spi_bus_dma_memory_alloc(SPI_HOST, PKT_LEN+1, 0);
     assert(send_tx_buf && send_rx_buf && recv_tx_buf && recv_rx_buf);
 
     ESP_LOGI(TAG, "SPI slave initialized");
@@ -253,7 +253,7 @@ esp_err_t spi_slave_send_packet(const uint8_t *data)
         return ret;
     }
 
-    ESP_LOGI(TAG, "SPI packet sent (%d bytes)", PKT_LEN);
+//    ESP_LOGI(TAG, "SPI packet sent (%d bytes)", PKT_LEN);
     return ESP_OK;
 }
 /***********************************************************************************************/
@@ -280,7 +280,7 @@ esp_err_t spi_slave_recv_packet(uint8_t *rx_packet, TickType_t timeout_ms)
     }
 
     memcpy(rx_packet, recv_rx_buf, PKT_LEN);
-    ESP_LOGI(TAG, "SPI packet received (%d bytes)", PKT_LEN);
+//    ESP_LOGI(TAG, "SPI packet received (%d bytes)", PKT_LEN);
     return ESP_OK;
 }
 /***********************************************************************************************/
@@ -389,11 +389,13 @@ static err_t virtual_netif_output(struct netif *netif, struct pbuf *p, const ip4
 
     log_l3_tcp(p);
 
-    spi_pkt_t pkt = {0};
-    pkt.len = p->tot_len;
-    pbuf_copy_partial(p, pkt.data, pkt.len, 0);
+    if (p->tot_len < PKT_LEN) {
+        spi_pkt_t pkt = {0};
+        pkt.len = p->tot_len;
+        pbuf_copy_partial(p, pkt.data, pkt.len, 0);
 
-    xQueueSend(spi_tx_queue, &pkt, 0);
+        xQueueSend(spi_tx_queue, &pkt, 0);
+    }
     return ERR_OK;
 }
 /***********************************************************************************************/
@@ -485,7 +487,7 @@ static void spi_rx_task(void *arg)
     while (1) {
         if (spi_recv_ip(buf, &length, 100) == ESP_OK && length != 0) {
             ESP_LOGI(TAG, "\nReceived valid SPI packet (%d bytes):", length);
-            dump_bytes(buf, length);
+//            dump_bytes(buf, length);
             spi_ipv4_forward(buf, length);
         }
 

@@ -477,57 +477,12 @@ int socket_tcp_client_create(int *ssock, const char *local_ip, u16 local_port, c
             break;
         }
 
-        /* --- Make socket unlocked --- */
-        int flags = fcntl(sock, F_GETFL, 0);
-        if (flags < 0) {
+        if (connect(sock, (struct sockaddr*)&server, sizeof(server)) < 0) {
+            log_msg(LOG_ERR, "Connect failed, errno=%d [%s]",
+                    errno, strerror(errno));
             result = RESULT_SOCKET_CONNECT_ERROR;
             break;
         }
-
-        if (fcntl(sock, F_SETFL, flags | O_NONBLOCK) < 0) {
-            result = RESULT_SOCKET_CONNECT_ERROR;
-            break;
-        }
-
-        int rc = connect(sock, (struct sockaddr*)&server, sizeof(server));
-        if (rc < 0) {
-            if (errno != EINPROGRESS) {
-                log_msg(LOG_ERR, "Connect failed, errno=%d [%s]",
-                        errno, strerror(errno));
-                result = RESULT_SOCKET_CONNECT_ERROR;
-                break;
-            }
-
-            struct pollfd pfd = {
-                .fd = sock,
-                .events = POLLOUT
-            };
-
-            rc = poll(&pfd, 1, CONNECT_TIMEOUT_MS);
-            if (rc == 0) {
-                log_msg(LOG_ERR, "Connect timeout");
-                result = RESULT_SOCKET_CONNECT_TIMEOUT;
-                break;
-            }
-            if (rc < 0) {
-                log_msg(LOG_ERR, "poll error: %s", strerror(errno));
-                result = RESULT_SOCKET_CONNECT_ERROR;
-                break;
-            }
-
-            int so_error = 0;
-            socklen_t slen = sizeof(so_error);
-            getsockopt(sock, SOL_SOCKET, SO_ERROR, &so_error, &slen);
-            if (so_error != 0) {
-                errno = so_error;
-                log_msg(LOG_ERR, "Connect failed, errno=%d [%s]",
-                        errno, strerror(errno));
-                result = RESULT_SOCKET_CONNECT_ERROR;
-                break;
-            }
-        }
-
-        fcntl(sock, F_SETFL, flags);
 
         log_msg(LOG_DEBUG, "TCP client connected to %s:%u",
                 server_ip, server_port);
@@ -607,7 +562,9 @@ int socket_tun_open_ip(int *ssock, const char *ifname, int nonblock)
 int socket_close(int sock)
 {
     int result = RESULT_ARGUMENT_ERROR;
+    printf("socket_close(%d)\n", sock);
     if (sock >= 0) {
+        setsockopt(sock, SOL_SOCKET, SO_LINGER, &(struct linger){1, 0}, sizeof(struct linger));
         if (close(sock) < 0) {
             log_msg(LOG_ERR, "Can't close socket %d, errno = %d [%s]", sock, errno, strerror(errno));
             result = RESULT_SOCKET_CLOSE_ERROR;
@@ -622,95 +579,35 @@ int socket_close(int sock)
 /***********************************************************************************************/
 int socket_send_data(int sock, void* buff, ssize_t sz)
 {
-    const uint8_t *p = buff;
-    size_t left = sz;
-
-    int flags = fcntl(sock, F_GETFL, 0);
-    if (flags < 0)
-        return RESULT_SOCKET_SEND_ERROR;
-
-    if (!(flags & O_NONBLOCK)) {
-        if (fcntl(sock, F_SETFL, flags | O_NONBLOCK) < 0)
-            return RESULT_SOCKET_SEND_ERROR;
-    }
-
-    int64_t deadline = now_ms() + POLL_TIMEOUT_MS;
-
-    while (left > 0) {
-
-        ssize_t n = write(sock, p, left);
-
-        if (n > 0) {
-            p += n;
-            left -= n;
-            continue;
+    int result = RESULT_OK;
+    do {
+//        print_dump(buff, sz, "socket_send");
+        int res = write(sock, buff, sz);
+        if (res < 0) {
+            log_msg(LOG_ERR, "Can't send message, errno = %d [%s]", errno, strerror(errno));
+            result = RESULT_SOCKET_SEND_ERROR;
+            break;
         }
+    } while(0);
 
-        if (n == 0) {
-            log_msg(LOG_ERR, "socket closed by peer");
-            return RESULT_SOCKET_SEND_ERROR;
-        }
-
-        if (errno == EINTR)
-            continue;
-
-        if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            log_msg(LOG_ERR, "write failed: %s", strerror(errno));
-            return RESULT_SOCKET_SEND_ERROR;
-        }
-
-        int64_t remaining = deadline - now_ms();
-        if (remaining <= 0) {
-            log_msg(LOG_ERR, "socket send timeout");
-            return RESULT_SOCKET_SEND_TIMEOUT;
-        }
-
-        struct pollfd pfd = {
-            .fd = sock,
-            .events = POLLOUT
-        };
-
-        int pr = poll(&pfd, 1, (int)remaining);
-        if (pr < 0) {
-            if (errno == EINTR)
-                continue;
-            log_msg(LOG_ERR, "poll error: %s", strerror(errno));
-            return RESULT_SOCKET_SEND_ERROR;
-        }
-
-        if (pr == 0) {
-            log_msg(LOG_ERR, "socket send timeout");
-            return RESULT_SOCKET_SEND_TIMEOUT;
-        }
-
-        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
-            log_msg(LOG_ERR, "socket error revents=0x%x", pfd.revents);
-            return RESULT_SOCKET_SEND_ERROR;
-        }
-    }
-
-    return RESULT_OK;
+    return result;
 }
 /***********************************************************************************************/
 int socket_read_data(int sock, void *buff, ssize_t *sz, int timeout_ms)
 {
     int result = RESULT_NODATA;
 
-    static struct pollfd pollfds[1];
+    struct pollfd pfd = {
+        .fd = sock,
+        .events = POLLIN
+    };
 
-    pollfds[0].fd = sock;
-    pollfds[0].events = POLLIN | POLLPRI;
-
-    int poll_result = poll(pollfds, 1, timeout_ms);
-    if (poll_result > 0) {
-        if (pollfds[0].revents & POLLIN) {
-            struct sockaddr_ll sll;
-            socklen_t sll_len = sizeof(sll);
-            *sz = recvfrom(sock, buff, *sz, 0, (struct sockaddr*)&sll, &sll_len);
-
-            if (sll.sll_pkttype != PACKET_OUTGOING && *sz > 0) {
-                result = RESULT_OK;
-            }
+    int ret = poll(&pfd, 1, timeout_ms);
+    if (ret > 0 && (pfd.revents & POLLIN)) {
+        ssize_t r = recv(sock, buff, *sz, 0);
+        if (r > 0) {
+            *sz = r;
+            result = RESULT_OK;
         }
     }
     return result;

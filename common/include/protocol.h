@@ -20,9 +20,9 @@ typedef struct {
         u16 crc;
         u16 sequence;
         u16 len;
-        u8  type;
         u16  answer_sequence;
         u16  answer_result;
+        u8  type;
         u8  unused[3];
     } header;
     u8 data[];

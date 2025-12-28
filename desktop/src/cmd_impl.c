@@ -38,7 +38,8 @@ static u16 sequence = 0x10;
 /***********************************************************************************************/
 commands_t commands[] = {
     {"send_str",        cmd_send_string,            "Send string to server."},
-    {"send_bin",        cmd_send_buinary,           "Send binary array to server."},
+    {"send_bin",        cmd_send_binary,            "Send binary array to server."},
+    {"send_tst",        cmd_send_test,              "Send binary array to server."},
     {"exit",            cmd_empty,                  "Exit from testtask (or press Ctrl-D)."}
 };
 /***********************************************************************************************/
@@ -178,7 +179,7 @@ void cmd_send_string(int cli_argc, const char **cli_argv)
             ssize_t received = sizeof(replay.buffer);
             result = socket_read_data(sockfd, replay.buffer, &received, SOCKET_READ_TIMEOUT_MS);
             if (!isOk(result) || received == 0) {
-                log_msg(LOG_ERR, "❌ Client recv failed");
+                log_msg(LOG_ERR, "❌ Client recv failed. result %u", result);
                 break;
             }
 
@@ -209,7 +210,61 @@ void cmd_send_string(int cli_argc, const char **cli_argv)
     socket_close(sockfd);
 }
 /***********************************************************************************************/
-void cmd_send_buinary(int cli_argc, const char **cli_argv)
+void cmd_send_test(int cli_argc, const char **cli_argv)
+{
+    const char *direct = CLIENT_MESSAGE;
+    int sockfd = -1;
+    char recv_buf[PACKET_SIZE];
+    int result = RESULT_OK;
+
+    struct option_entry entries[] = {
+        {"string", 's', "Enter string for sending", OPTION_FLAG_string, .string = &direct},
+        {NULL, 0, NULL, 0, .boolean=false},
+    };
+    int extra_args = opt_parse(cli_argc, cli_argv, entries);
+    if (extra_args < 0) {
+        opt_parse_usage(eprintf, cli_argv[0], entries);
+    }
+    else {
+        do {
+            result = socket_tcp_client_create(&sockfd, 0, 0, SERVER_ADDR, SERVER_PORT);
+            if (!isOk(result)) {
+                break;
+            }
+            printf("socket %d opened\n", sockfd);
+            /* Send message to server */
+            result = socket_send_data(sockfd, (void*)direct, strlen(direct));
+            if (!isOk(result)) {
+                log_msg(LOG_ERR, "❌ send failed");
+            }
+
+            /* Receive reply */
+            ssize_t received = sizeof(recv_buf);
+            result = socket_read_data(sockfd, recv_buf, &received, SOCKET_READ_TIMEOUT_MS);
+            if (!isOk(result)) {
+                log_msg(LOG_ERR, "❌ recv failed. result %u", result);
+                break;
+            }
+
+            recv_buf[received] = '\0';
+
+            /* Print server response */
+            print_string("Server reply: %s\n", recv_buf);
+
+        } while(0);
+
+        if (!isOk(result)) {
+            print_string("❌ Server not responding\n");
+        }
+
+    }
+
+
+    printf("socket %d closed\n", sockfd);
+    socket_close(sockfd);
+}
+/***********************************************************************************************/
+void cmd_send_binary(int cli_argc, const char **cli_argv)
 {
     const uint8_t array_good_bin[] = CLIENT_ARRAY;
     const uint8_t array_wrong_bin[] = WRONG_ARRAY;
