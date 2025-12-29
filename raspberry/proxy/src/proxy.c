@@ -316,54 +316,68 @@ int spi_recv_transfer(int spi_fd, uint8_t *out)
     uint32_t start = 0;
     bool is_timeout = false;
     char gpio_value;
+    int res = 0;
 
-    if (!out)
-        return -1;
-
-    memset(spi_recv_tx_buff, 0, PKT_LEN);
-    struct spi_ioc_transfer tr = {
-        .tx_buf        = (unsigned long)spi_recv_tx_buff,
-        .rx_buf        = (unsigned long)spi_recv_rx_buff,
-        .len           = PKT_LEN,
-        .speed_hz      = SPI_SPEED,
-        .bits_per_word = 8,
-        .cs_change     = 0,
-    };
-
-    start = now_ms();
-    while (1) {
-        lseek(gpio_fd, 0, SEEK_SET);
-        read(gpio_fd, &gpio_value, 1);
-        if (gpio_value == '1') break;   // ESP32 READY
-        if (now_ms() - start >= 500) {
-            is_timeout = true;
-            break;
-        }
-        usleep(100);
-    }
-
-    if (!is_timeout) {
-        int ret = ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr);
-        if (ret < 1) {
-            perror("spi recv");
-            return -1;
-        }
-        else {
-            memcpy(out, spi_recv_rx_buff, PKT_LEN);
-            /* DEBUG dump */
-//            printf("\nSPI RECV %zu bytes:", PKT_LEN);
-//            for (size_t i = 0; i < PKT_LEN; i++) {
-//                if (i % 16 == 0) printf("\n%04zx: ", i);
-//                printf("%02x ", out[i]);
-//            }
-//            printf("\n");
-        }
+    if (!out) {
+        res = -1;
     }
     else {
-        return -1;
+        memset(spi_recv_tx_buff, 0, PKT_LEN);
+        struct spi_ioc_transfer tr = {
+            .tx_buf        = (unsigned long)spi_recv_tx_buff,
+            .rx_buf        = (unsigned long)spi_recv_rx_buff,
+            .len           = PKT_LEN,
+            .speed_hz      = SPI_SPEED,
+            .bits_per_word = 8,
+            .cs_change     = 0,
+        };
+
+        start = now_ms();
+        while (1) {
+            lseek(gpio_fd, 0, SEEK_SET);
+            read(gpio_fd, &gpio_value, 1);
+            if (gpio_value == '1') break;   // ESP32 READY
+            if (now_ms() - start >= 500) {
+                is_timeout = true;
+                break;
+            }
+            usleep(100);
+        }
+
+        if (is_timeout) {
+            res = -1;
+        }
+        else {
+            int ret = ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr);
+            if (ret < 1) {
+                perror("spi recv");
+                res = -1;
+            }
+            else {
+                memcpy(out, spi_recv_rx_buff, PKT_LEN);
+                /* DEBUG dump */
+    //            printf("\nSPI RECV %zu bytes:", PKT_LEN);
+    //            for (size_t i = 0; i < PKT_LEN; i++) {
+    //                if (i % 16 == 0) printf("\n%04zx: ", i);
+    //                printf("%02x ", out[i]);
+    //            }
+    //            printf("\n");
+            }
+//            start = now_ms();
+//            while (1) {
+//                lseek(gpio_fd, 0, SEEK_SET);
+//                read(gpio_fd, &gpio_value, 1);
+//                if (gpio_value == '0') break;   // ESP32 READY
+//                if (now_ms() - start >= 500) {
+//                    is_timeout = true;
+//                    break;
+//                }
+//                usleep(100);
+//            }
+        }
     }
 
-    return 0;
+    return res;
 }
 /***********************************************************************************************/
 /**
@@ -464,10 +478,12 @@ int spi_receive(int spi_fd, uint8_t *out_buf, uint16_t *length)
 
         // [DEBUG] Dump packet ONLY FOR DEBUG!!!
 //        printf("MASTER received: ");
-//        for (int i = 0; i < sizeof(rx_buff); i++)
+//        for (int i = 0; i < sizeof(rx_buff); i++) {
+//            if (i % 16 == 0) printf("\n%04zx: ", i);
 //            printf("%02x ", rx_buff[i]);
+//        }
 //        printf("\n");
-//        // [DEBUG] End
+        // [DEBUG] End
 
         spi_ip_hdr_t *hdr = (spi_ip_hdr_t *)rx_buff;
         uint32_t magic = hdr->magic;
@@ -488,23 +504,23 @@ int spi_receive(int spi_fd, uint8_t *out_buf, uint16_t *length)
         if (recv_crc != crc32(0, payload, pkt_len)) {
             printf("Bad crc\n");
 
-            // [DEBUG] Dump packet ONLY FOR DEBUG!!!
-            printf("MASTER received: ");
-            for (size_t i = 0; i < sizeof(rx_buff); i++) {
-                if (i % 16 == 0) printf("\n%04zx: ", i);
-                printf("%02x ", rx_buff[i]);
-            }
-            printf("\n");
-            // [DEBUG] End
+//            // [DEBUG] Dump packet ONLY FOR DEBUG!!!
+//            printf("MASTER received: ");
+//            for (size_t i = 0; i < sizeof(rx_buff); i++) {
+//                if (i % 16 == 0) printf("\n%04zx: ", i);
+//                printf("%02x ", rx_buff[i]);
+//            }
+//            printf("\n");
+//            // [DEBUG] End
 
-            // [DEBUG] Dump packet ONLY FOR DEBUG!!!
-            printf("Packet: ");
-            for (size_t i = 0; i < pkt_len; i++) {
-                if (i % 16 == 0) printf("\n%04zx: ", i);
-                printf("%02x ", payload[i]);
-            }
-            printf("\n");
-            // [DEBUG] End
+//            // [DEBUG] Dump packet ONLY FOR DEBUG!!!
+//            printf("Packet: ");
+//            for (size_t i = 0; i < pkt_len; i++) {
+//                if (i % 16 == 0) printf("\n%04zx: ", i);
+//                printf("%02x ", payload[i]);
+//            }
+//            printf("\n");
+//            // [DEBUG] End
 
             return -1;
         }
@@ -548,7 +564,6 @@ void forward_loop(int tun_fd, int spi_fd)
 //                }
                 // [DEBUG] End
 
-//                usleep(100000);
                 // Forward to SPI
                 spi_send_packet(spi_fd, tun_buf, n);
             } else if (ip_version == 6) {
@@ -572,7 +587,6 @@ void forward_loop(int tun_fd, int spi_fd)
             // [DEBUG] End
 
             write_tun_packet(tun_fd, spi_rx, length);
-
         }
 
         usleep(1000);
@@ -692,6 +706,12 @@ int main() {
     export_gpio(gpio);
 
     gpio_fd = open(GPIO_READY_SYSFS, O_RDONLY);
+
+//    uint8_t message[] = CLIENT_MESSAGE;
+//    spi_send_packet(spi_fd, message, sizeof(message));
+//    usleep(100000);
+//    spi_send_packet(spi_fd, message, sizeof(message));
+//    usleep(100000);
 
     forward_loop(tun_fd, spi_fd);
 

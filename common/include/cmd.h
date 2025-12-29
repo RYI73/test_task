@@ -27,5 +27,4 @@ void cmd_usage(void);
 void cmd_empty(int cli_argc, const char **cli_argv);
 void cmd_send_string(int cli_argc, const char **cli_argv);
 void cmd_send_binary(int cli_argc, const char **cli_argv);
-void cmd_send_test(int cli_argc, const char **cli_argv);
 /***********************************************************************************************/

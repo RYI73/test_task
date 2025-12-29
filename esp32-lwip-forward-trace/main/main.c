@@ -237,7 +237,10 @@ static void spi_slave_init(void)
  */
 esp_err_t spi_slave_send_packet(const uint8_t *data)
 {
-    if (!data) return ESP_FAIL;
+    if (!data || !send_tx_buf || !send_rx_buf) {
+        ESP_LOGI(TAG, "Send NULL ptr.)", PKT_LEN);
+        return ESP_FAIL;
+    }
 
     memcpy(send_tx_buf, data, PKT_LEN);
 
@@ -265,7 +268,12 @@ esp_err_t spi_slave_send_packet(const uint8_t *data)
  */
 esp_err_t spi_slave_recv_packet(uint8_t *rx_packet, TickType_t timeout_ms)
 {
-    if (!rx_packet) return ESP_FAIL;
+    if (!rx_packet || !recv_tx_buf || !recv_rx_buf) {
+        ESP_LOGI(TAG, "Recv NULL ptr.)", PKT_LEN);
+        return ESP_FAIL;
+    }
+
+    memset(recv_rx_buf, 0, PKT_LEN);
 
     spi_slave_transaction_t t = {
         .length    = PKT_LEN * 8,
@@ -511,6 +519,8 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
+    gpio_ready_init();
+
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
@@ -518,7 +528,6 @@ void app_main(void)
     assert(spi_tx_queue != NULL);
 
     spi_slave_init();
-    gpio_ready_init();
     wifi_init();
 
     ESP_LOGI(TAG, "Waiting for IP...");
@@ -534,6 +543,8 @@ void app_main(void)
                  netif_default->name[0], netif_default->name[1], netif_default->num,
                  ip ? ip4addr_ntoa(ip) : "none");
     }
+
+    memset(send_tx_buf, 0, PKT_LEN);
 
     xTaskCreate(spi_rx_task, "spi_rx_task", 4096, NULL, 3, NULL);
 }
