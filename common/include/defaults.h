@@ -9,7 +9,7 @@
 /***********************************************************************************************/
 #define MAX_DUMP_BUFFER_SIZE                    (128)
 /***********************************************************************************************/
-#define SOCKET_READ_TIMEOUT_MS                  (500)
+#define SOCKET_READ_TIMEOUT_MS                  (2000)
 /***********************************************************************************************/
 /** Localhost IPv4 address (string form) */
 #define LOCALHOST_ADDR                          "127.0.0.1"
@@ -39,7 +39,7 @@
     0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF    \
 }
 /** Maximum size of packet */
-#define PACKET_SIZE                             (128)
+#define PACKET_SIZE                             (256)
 /** Maximum number of concurrent clients */
 #define MAX_CLIENTS                             (5)
 /** poll() timeout in milliseconds */
@@ -54,7 +54,7 @@
 #define MAX_PKT_SIZE                            1500            /**< Maximum packet size for SPI transfer */
 #define SPI_MAGIC                               0x49504657      /**< Magic constant ('IPFW') for SPI framing */
 #define SPI_PROTO_VERSION                       1
-#define PKT_LEN                                 128
+#define PKT_LEN                                 256
 
 /** GPIO handshake definitions */
 #define GPIO_READY_SYSFS                        "/sys/class/gpio/gpio537/value"

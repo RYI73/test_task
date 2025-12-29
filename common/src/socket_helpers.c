@@ -608,12 +608,12 @@ int socket_close(int sock)
 {
     int result = RESULT_ARGUMENT_ERROR;
     if (sock >= 0) {
+        setsockopt(sock, SOL_SOCKET, SO_LINGER, &(struct linger){1, 0}, sizeof(struct linger));
         if (close(sock) < 0) {
             log_msg(LOG_ERR, "Can't close socket %d, errno = %d [%s]", sock, errno, strerror(errno));
             result = RESULT_SOCKET_CLOSE_ERROR;
         }
         else {
-            log_msg(LOG_INFO, "Closed socket %d", sock);
             result = RESULT_OK;
         }
     }

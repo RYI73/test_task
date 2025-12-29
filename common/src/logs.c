@@ -1,7 +1,11 @@
+//#define DEBUG 1
+
 #include "logs.h"
 #include "helpers.h"
+#if DEBUG
+#include <stdio.h>
+#endif
 
-//#define DEBUG 1
 static int g_log_facility = LOG_DAEMON;
 /***********************************************************************************************/
 void log_msg(int log_prio, const char* message, ...)

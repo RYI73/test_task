@@ -38,7 +38,7 @@ static u16 sequence = 0x10;
 /***********************************************************************************************/
 commands_t commands[] = {
     {"send_str",        cmd_send_string,            "Send string to server."},
-    {"send_bin",        cmd_send_buinary,           "Send binary array to server."},
+    {"send_bin",        cmd_send_binary,            "Send binary array to server."},
     {"exit",            cmd_empty,                  "Exit from testtask (or press Ctrl-D)."}
 };
 /***********************************************************************************************/
@@ -178,7 +178,7 @@ void cmd_send_string(int cli_argc, const char **cli_argv)
             ssize_t received = sizeof(replay.buffer);
             result = socket_read_data(sockfd, replay.buffer, &received, SOCKET_READ_TIMEOUT_MS);
             if (!isOk(result) || received == 0) {
-                log_msg(LOG_ERR, "❌ Client recv failed");
+                log_msg(LOG_ERR, "❌ Client recv failed. result %u", result);
                 break;
             }
 
@@ -209,7 +209,7 @@ void cmd_send_string(int cli_argc, const char **cli_argv)
     socket_close(sockfd);
 }
 /***********************************************************************************************/
-void cmd_send_buinary(int cli_argc, const char **cli_argv)
+void cmd_send_binary(int cli_argc, const char **cli_argv)
 {
     const uint8_t array_good_bin[] = CLIENT_ARRAY;
     const uint8_t array_wrong_bin[] = WRONG_ARRAY;
