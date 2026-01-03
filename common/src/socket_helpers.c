@@ -357,3 +357,136 @@ int socket_read_data(int sock, void *buff, ssize_t *sz, int timeout_ms)
     return result;
 }
 /***********************************************************************************************/
+int tun_alloc(char *devname)
+{
+    struct ifreq ifr;
+    int fd;
+
+    if ((fd = open("/dev/net/tun", O_RDWR)) < 0) {
+        perror("tun open");
+        return -1;
+    }
+
+    memset(&ifr, 0, sizeof(ifr));
+    ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
+    if (devname)
+        strncpy(ifr.ifr_name, devname, IFNAMSIZ);
+
+    if (ioctl(fd, TUNSETIFF, (void *)&ifr) < 0) {
+        perror("tun ioctl");
+        close(fd);
+        return -1;
+    }
+
+    printf("TUN interface %s created\n", ifr.ifr_name);
+    return fd;
+}
+/***********************************************************************************************/
+int tun_set_up(const char *ifname)
+{
+    struct ifreq ifr;
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        perror("socket");
+        return -1;
+    }
+
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+
+    if (ioctl(sock, SIOCGIFFLAGS, &ifr) < 0) {
+        perror("SIOCGIFFLAGS");
+        close(sock);
+        return -1;
+    }
+
+    if (!(ifr.ifr_flags & IFF_UP)) {
+        ifr.ifr_flags |= IFF_UP;
+        if (ioctl(sock, SIOCSIFFLAGS, &ifr) < 0) {
+            perror("SIOCSIFFLAGS");
+            close(sock);
+            return -1;
+        }
+        printf("Interface %s set UP\n", ifname);
+    }
+
+    close(sock);
+    return 0;
+}
+/***********************************************************************************************/
+int tun_has_ip(const char *ifname, const char *ip_str)
+{
+    struct ifreq ifr;
+    struct sockaddr_in *addr;
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) return 0;
+
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+
+    if (ioctl(sock, SIOCGIFADDR, &ifr) < 0) {
+        close(sock);
+        return 0;   /**< IP not set yet */
+    }
+
+    addr = (struct sockaddr_in *)&ifr.ifr_addr;
+    close(sock);
+
+    return strcmp(inet_ntoa(addr->sin_addr), ip_str) == 0;
+}
+/***********************************************************************************************/
+int tun_add_ip(const char *ifname, const char *ip_str)
+{
+    struct ifreq ifr;
+    struct sockaddr_in addr;
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        perror("socket");
+        return -1;
+    }
+
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+
+    addr.sin_family = AF_INET;
+    inet_pton(AF_INET, ip_str, &addr.sin_addr);
+    memcpy(&ifr.ifr_addr, &addr, sizeof(addr));
+
+    if (ioctl(sock, SIOCSIFADDR, &ifr) < 0) {
+        perror("SIOCSIFADDR");
+        close(sock);
+        return -1;
+    }
+
+    close(sock);
+    printf("IP %s added to %s\n", ip_str, ifname);
+    return 0;
+}
+/***********************************************************************************************/
+ssize_t read_tun_packet(int tun_fd, uint8_t *buf)
+{
+    static int nonblock_set = 0;
+    if (!nonblock_set) {
+        int flags = fcntl(tun_fd, F_GETFL, 0);
+        fcntl(tun_fd, F_SETFL, flags | O_NONBLOCK);
+        nonblock_set = 1;
+    }
+
+    ssize_t n = read(tun_fd, buf, MAX_PKT_SIZE);
+    if (n < 0) {
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            perror("read tun");
+        }
+
+        return 0;
+    }
+    return n;
+}
+/***********************************************************************************************/
+ssize_t write_tun_packet(int tun_fd, uint8_t *buf, size_t len)
+{
+    ssize_t n = write(tun_fd, buf, len);
+    if (n < 0) perror("write tun");
+    return n;
+}
+/***********************************************************************************************/

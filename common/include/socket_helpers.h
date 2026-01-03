@@ -54,6 +54,24 @@ int socket_close(int sock);
 int socket_send_data(int sock, void* buff, ssize_t sz);
 
 /**
+ * @brief Add IP address to TUN interface
+ *
+ * @param ifname Interface name
+ * @param ip_str IP address string
+ * @return 0 on success, -1 on error
+ */
+int tun_add_ip(const char *ifname, const char *ip_str);
+
+/**
+ * @brief Check if TUN interface has specific IP address
+ *
+ * @param ifname Interface name
+ * @param ip_str IP address string (e.g., "10.0.0.2")
+ * @return 1 if IP is configured, 0 otherwise
+ */
+int tun_has_ip(const char *ifname, const char *ip_str);
+
+/**
  * @brief Reads data from a socket with a timeout.
  *
  * Uses `poll()` to wait for data on the given socket for a specified time,
@@ -69,7 +87,39 @@ int socket_read_data(int sock, void *buff, ssize_t *sz, int timeout_ms);
 
 int socket_tcp_client_create(int *ssock, const char *local_ip, u16 local_port, const char *server_ip, u16 server_port);
 
-int socket_read_tun(int sock, void *buff, u16 *sz, int timeout_ms);
-int socket_send_tun(int sock, const void *buff, size_t sz);
+/**
+ * @brief Allocate a TUN interface
+ *
+ * @param devname Desired interface name (e.g., "tun0")
+ * @return File descriptor for TUN interface, or -1 on failure
+ */
+int tun_alloc(char *devname);
+
+/**
+ * @brief Set TUN interface UP
+ *
+ * @param ifname Interface name
+ * @return 0 on success, -1 on failure
+ */
+int tun_set_up(const char *ifname);
+
+/**
+ * @brief Read a packet from TUN interface
+ *
+ * @param tun_fd File descriptor of TUN
+ * @param buf Buffer to store packet
+ * @return Number of bytes read, or -1 on error
+ */
+ssize_t read_tun_packet(int tun_fd, uint8_t *buf);
+
+/**
+ * @brief Write a packet to TUN interface
+ *
+ * @param tun_fd File descriptor of TUN
+ * @param buf Packet data
+ * @param len Length of packet
+ * @return Number of bytes written, or -1 on error
+ */
+ssize_t write_tun_packet(int tun_fd, uint8_t *buf, size_t len);
 
 /***********************************************************************************************/
