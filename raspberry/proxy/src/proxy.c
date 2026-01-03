@@ -13,10 +13,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <syslog.h>
 #include <signal.h>
+#include <poll.h>
+#include <errno.h>
 
 #include "defaults.h"
 #include "logs.h"
@@ -27,51 +30,79 @@
 
 /***********************************************************************************************/
 /**
- * @brief Main forwarding loop between TUN interface and SPI transport.
+ * @brief Event-driven forwarding loop between TUN interface and SPI transport.
  *
- * Continuously processes packets in both directions:
+ * Continuously processes packets in both directions using poll() on
+ * TUN and GPIO file descriptors:
  *  - Reads packets from TUN interface and forwards IPv4 packets over SPI
- *  - Receives packets from SPI and writes them back to TUN interface
+ *  - Receives packets from SPI when GPIO handshake indicates data ready,
+ *    and writes them back to the TUN interface
  *
  * IPv6 packets received from TUN are ignored.
  *
- * @param[in] tun_fd   File descriptor of the TUN device
- * @param[in] spi_fd   File descriptor of the SPI device
- * @param[in] gpio_fd  File descriptor used for SPI/GPIO synchronization
+ * @param[in] tun_fd            File descriptor of the TUN device
+ * @param[in] spi_fd            File descriptor of the SPI device
+ * @param[in] gpio_fd           File descriptor for SPI handshake GPIO (sysfs)
+ * @param[in,out] is_running    Pointer to boolean flag controlling loop execution.
+ *                              Set to false to terminate the loop gracefully.
  *
  * @note
- *  - This function runs an infinite loop and never returns.
- *  - A small delay is inserted to reduce CPU usage.
+ *  - This function is **event-driven** and replaces previous polling with
+ *    `usleep()`, reducing CPU usage.
+ *  - `poll()` monitors both TUN and GPIO file descriptors.
  *  - Only IPv4 packets (IP version 4) are forwarded to SPI.
+ *  - On timeout (`POLL_TIMEOUT_MS`), the loop continues without action.
  */
-void forward_loop(int tun_fd, int spi_fd, int gpio_fd, bool *is_running)
+void forward_loop(int tun_fd, int spi_fd, int gpio_fd, volatile bool *is_running)
 {
     uint8_t tun_buf[MAX_PKT_SIZE];
     static uint8_t spi_rx[PKT_LEN];
     uint16_t length = 0;
     uint8_t ip_version = 0;
 
-    while(*is_running) {
-        ssize_t n = read_tun_packet(tun_fd, tun_buf);
-        if (n > 0) {
-            ip_version = tun_buf[0] >> 4;
-            if (ip_version == 4) {
-                // Forward to SPI
-                spi_send_packet(spi_fd, gpio_fd, tun_buf, n);
-            } else if (ip_version == 6) {
-                // Ignore IPv6 packets
-                log_msg(LOG_DEBUG, "Received IPv6 packet, ignoring\n");
-            } else {
-                log_msg(LOG_WARNING, "Unknown IP version %d, ignoring\n", ip_version);
+    struct pollfd fds[2];
+    fds[0].fd = tun_fd;
+    fds[0].events = POLLIN;
+
+    fds[1].fd = gpio_fd;
+    fds[1].events = POLLIN;
+
+    while (*is_running) {
+        int ret = poll(fds, 2, POLL_TIMEOUT_MS);
+        if (ret < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            log_msg(LOG_ERR, "POLL error: %s", strerror(errno));
+            break;
+        }
+        else if (ret == 0) {
+            // timeout, do nothing
+            continue;
+        }
+
+        // TUN ready
+        if (fds[0].revents & POLLIN) {
+            ssize_t n = read_tun_packet(tun_fd, tun_buf);
+            if (n > 0) {
+                ip_version = tun_buf[0] >> 4;
+                if (ip_version == 4) {
+                    spi_send_packet(spi_fd, gpio_fd, tun_buf, n);
+                } else if (ip_version == 6) {
+                    log_msg(LOG_DEBUG, "Received IPv6 packet, ignoring\n");
+                } else {
+                    log_msg(LOG_WARNING, "Unknown IP version %d, ignoring\n", ip_version);
+                }
             }
         }
 
-        length = 0;
-        if (!spi_receive(spi_fd, gpio_fd, spi_rx, &length)) {
-            write_tun_packet(tun_fd, spi_rx, length);
+        // GPIO ready / SPI data
+        if (fds[1].revents & POLLIN) {
+            length = 0;
+            if (!spi_receive(spi_fd, gpio_fd, spi_rx, &length)) {
+                write_tun_packet(tun_fd, spi_rx, length);
+            }
         }
-
-        usleep(1000);
     }
 }
 /***********************************************************************************************/
@@ -80,7 +111,7 @@ void forward_loop(int tun_fd, int spi_fd, int gpio_fd, bool *is_running)
  */
 int main()
 {
-    bool is_running = true;
+    volatile bool is_running = true;
     int gpio_fd = -1;
     int spi_fd = -1;
     int tun_fd = -1;
@@ -129,13 +160,13 @@ int main()
         forward_loop(tun_fd, spi_fd, gpio_fd, &is_running);
     } while(0);
 
-    if (gpio_fd > 0) {
+    if (gpio_fd >= 0) {
         close(gpio_fd);
     }
-    if (spi_fd > 0) {
+    if (spi_fd >= 0) {
         close(spi_fd);
     }
-    if (tun_fd > 0) {
+    if (tun_fd >= 0) {
         close(tun_fd);
     }
 

@@ -80,7 +80,7 @@ static int tun_alloc(char *if_name, int *tun_fd)
 
     } while(0);
 
-    if (!isOk(result) && fd > 0) {
+    if (!isOk(result) && fd >= 0) {
         close(fd);
         fd = -1;
     }

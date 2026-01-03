@@ -80,7 +80,7 @@ static int export_gpio(int gpio)
 
     } while(0);
 
-    if (fd > 0) {
+    if (fd >= 0) {
         close(fd);
     }
 
