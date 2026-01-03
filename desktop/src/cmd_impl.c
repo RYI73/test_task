@@ -42,6 +42,122 @@ commands_t commands[] = {
     {"exit",            cmd_empty,                  "Exit from testtask (or press Ctrl-D)."}
 };
 /***********************************************************************************************/
+/* Internal functions                                                                          */
+/***********************************************************************************************/
+/**
+ * @brief Print usage/help for available commands.
+ */
+static void cmd_usage(void)
+{
+    print_string("Available commands:\n");
+    for (u32 i = 0; i < ARRAY_SIZE(commands); i++) {
+        print_string("%-10s\t%s\n", commands[i].name, commands[i].description);
+    }
+}
+/***********************************************************************************************/
+/**
+ * @brief Parse CLI arguments and dispatch to corresponding command function.
+ *
+ * @param[in] cli_argc Number of arguments
+ * @param[in] cli_argv Array of argument strings
+ */
+static void parser(int cli_argc, char **cli_argv)
+{
+    bool is_cmd_found = false;
+    for (u32 i = 0; i < ARRAY_SIZE(commands); i++) {
+        if (!strncmp(commands[i].name, cli_argv[0], strlen(commands[i].name))) {
+            commands[i].parser_fn(cli_argc, (const char **)cli_argv);
+            is_cmd_found = true;
+            break;
+        }
+    }
+
+    if (!is_cmd_found) {
+        print_string("Unknown command '%s'.\n", cli_argv[0]);
+        cmd_usage();
+    }
+}
+/***********************************************************************************************/
+/**
+ * @brief Print formatted string to stderr.
+ *
+ * @param[in] str Format string
+ * @param[in] ... Arguments
+ * @return Always returns 0
+ */
+static int eprintf(const char *str, ...)
+{
+    va_list ap;
+    va_start(ap, str);
+    vfprintf(stderr, str, ap);
+    va_end(ap);
+    return 0;
+}
+/***********************************************************************************************/
+/**
+ * @brief Perform a single request/reply transaction with the server.
+ *
+ * Opens TCP connection, sends request packet, waits for reply, validates reply,
+ * and prints results.
+ *
+ * @param[in]  request Pointer to request packet
+ * @param[out] replay  Pointer to buffer for server reply
+ * @return RESULT_OK on success, error code otherwise
+ */
+static int cmd_transaction(packet_t *request, packet_t *replay)
+{
+    int sockfd = -1;
+    ssize_t received = 0;
+    int result = RESULT_OK;
+
+    do {
+        result = socket_tcp_client_create(&sockfd, 0, 0, SERVER_ADDR, SERVER_PORT);
+        if (!isOk(result)) {
+            break;
+        }
+
+        /* Send message to server */
+        result = socket_send_data(sockfd, (void*)request->buffer, request->packet.header.len + PACKET_HEADER_SIZE);
+        if (!isOk(result)) {
+            log_msg(LOG_ERR, "❌ Client send failed");
+            break;
+        }
+
+        /* Receive reply */
+        received = sizeof(replay->buffer);
+        result = socket_read_data(sockfd, replay->buffer, &received, SOCKET_READ_TIMEOUT_MS);
+        if (!isOk(result) || received == 0) {
+            log_msg(LOG_ERR, "❌ Client recv failed");
+            break;
+        }
+
+        /* Validate reply */
+        if (isOk(protocol_packet_validate(replay))) {
+            if (replay->packet.header.type == PACKET_TYPE_ANSWER) {
+                if (isOk(replay->packet.header.answer_result)) {
+                    print_string("Server responded OK on packet %u\n",  replay->packet.header.answer_sequence);
+                }
+                else {
+                    print_string("Server returned an error %u on packet %u\n",  replay->packet.header.answer_result, replay->packet.header.answer_sequence);
+                }
+            }
+            else {
+                print_string("Server responded with unknown type: %u\n",  replay->packet.header.type);
+            }
+        }
+    } while(0);
+
+    socket_close(sockfd);
+
+    if (!isOk(result)) {
+        print_string("❌ Server unavailable\n");
+    }
+
+    return result;
+}
+/***********************************************************************************************/
+/* External functions                                                                          */
+/***********************************************************************************************/
 void cmd_init(const char *prompt,
                        void (*put_char)(void *data, char ch, bool is_last),
                        void (*print_logo)(void),
@@ -91,40 +207,6 @@ int cmd_process_symbol(char ch)
     return result;
 }
 /***********************************************************************************************/
-void cmd_usage(void)
-{
-    print_string("Available commands:\n");
-    for (u32 i = 0; i < ARRAY_SIZE(commands); i++) {
-        print_string("%-10s\t%s\n", commands[i].name, commands[i].description);
-    }
-}
-/***********************************************************************************************/
-static int eprintf(const char *str, ...)
-{
-    va_list ap;
-    va_start(ap, str);
-    vfprintf(stderr, str, ap);
-    va_end(ap);
-    return 0;
-}
-/***********************************************************************************************/
-void parser(int cli_argc, char **cli_argv)
-{
-    bool is_cmd_found = false;
-    for (u32 i = 0; i < ARRAY_SIZE(commands); i++) {
-        if (!strncmp(commands[i].name, cli_argv[0], strlen(commands[i].name))) {
-            commands[i].parser_fn(cli_argc, (const char **)cli_argv);
-            is_cmd_found = true;
-            break;
-        }
-    }
-
-    if (!is_cmd_found) {
-        print_string("Unknown command '%s'.\n", cli_argv[0]);
-        cmd_usage();
-    }
-}
-/***********************************************************************************************/
 void cmd_empty(int cli_argc, const char **cli_argv)
 {
     UNUSED(cli_argc);
@@ -135,7 +217,6 @@ void cmd_send_string(int cli_argc, const char **cli_argv)
 {
     const char *message = CLIENT_MESSAGE;
     bool wrong_string_mode = false;
-    int sockfd = -1;
     size_t len = 0;
     packet_t request = {0};
     packet_t replay = {0};
@@ -152,11 +233,6 @@ void cmd_send_string(int cli_argc, const char **cli_argv)
     }
     else {
         do {
-            result = socket_tcp_client_create(&sockfd, 0, 0, SERVER_ADDR, SERVER_PORT);
-            if (!isOk(result)) {
-                break;
-            }
-
             if (wrong_string_mode) {
                 message = WRONG_MESSAGE;
             }
@@ -168,45 +244,13 @@ void cmd_send_string(int cli_argc, const char **cli_argv)
             request.packet.header.type = PACKET_TYPE_STRING;
             protocol_packet_prepare(&request, sequence++, len);
 
-            /* Send message to server */
-            result = socket_send_data(sockfd, (void*)request.buffer, len + PACKET_HEADER_SIZE);
+            result = cmd_transaction(&request, &replay);
             if (!isOk(result)) {
-                log_msg(LOG_ERR, "❌ Client send failed");
-            }
-
-            /* Receive reply */
-            ssize_t received = sizeof(replay.buffer);
-            result = socket_read_data(sockfd, replay.buffer, &received, SOCKET_READ_TIMEOUT_MS);
-            if (!isOk(result) || received == 0) {
-                log_msg(LOG_ERR, "❌ Client recv failed. result %u", result);
                 break;
             }
 
-            /* Validate reply */
-            if (isOk(protocol_packet_validate(&replay))) {
-                if (replay.packet.header.type == PACKET_TYPE_ANSWER) {
-                    if (isOk(replay.packet.header.answer_result)) {
-                        print_string("Server responded OK on packet %u\n",  replay.packet.header.answer_sequence);
-                    }
-                    else {
-                        print_string("Server returned an error %u on packet %u\n",  replay.packet.header.answer_result, replay.packet.header.answer_sequence);
-                    }
-                }
-                else {
-                    print_string("Server responded with unknown type: %u\n",  replay.packet.header.type);
-                }
-            }
-
         } while(0);
-
-        if (!isOk(result)) {
-            print_string("❌ Server not responding\n");
-        }
-
     }
-
-
-    socket_close(sockfd);
 }
 /***********************************************************************************************/
 void cmd_send_binary(int cli_argc, const char **cli_argv)
@@ -217,7 +261,6 @@ void cmd_send_binary(int cli_argc, const char **cli_argv)
     const char *binary_str = NULL;
     uint8_t array[64] = {0};
     bool wrong_bin_mode = false;
-    int sockfd = -1;
     size_t len = 0;
     packet_t request = {0};
     packet_t replay = {0};
@@ -234,11 +277,6 @@ void cmd_send_binary(int cli_argc, const char **cli_argv)
     }
     else {
         do {
-            result = socket_tcp_client_create(&sockfd, 0, 0, SERVER_ADDR, SERVER_PORT);
-            if (!isOk(result)) {
-                break;
-            }
-
             len = sizeof(array_good_bin);
             if (binary_str != NULL && isOk(hexstr_to_bytes(binary_str, array, sizeof(array), &len))) {
                 array_bin = array;
@@ -253,43 +291,12 @@ void cmd_send_binary(int cli_argc, const char **cli_argv)
             request.packet.header.type = PACKET_TYPE_ARRAY;
             protocol_packet_prepare(&request, sequence++, len);
 
-            /* Send message to server */
-            result = socket_send_data(sockfd, (void*)request.buffer, len + PACKET_HEADER_SIZE);
+            result = cmd_transaction(&request, &replay);
             if (!isOk(result)) {
-                log_msg(LOG_ERR, "❌ Client send failed");
-            }
-
-            /* Receive reply */
-            ssize_t received = sizeof(replay.buffer);
-            result = socket_read_data(sockfd, replay.buffer, &received, SOCKET_READ_TIMEOUT_MS);
-            if (!isOk(result) || received == 0) {
-                log_msg(LOG_ERR, "❌ Client recv failed");
                 break;
             }
 
-            /* Validate reply */
-            if (isOk(protocol_packet_validate(&replay))) {
-                if (replay.packet.header.type == PACKET_TYPE_ANSWER) {
-                    if (isOk(replay.packet.header.answer_result)) {
-                        print_string("Server responded OK on packet %u\n",  replay.packet.header.answer_sequence);
-                    }
-                    else {
-                        print_string("Server returned an error %u on packet %u\n",  replay.packet.header.answer_result, replay.packet.header.answer_sequence);
-                    }
-                }
-                else {
-                    print_string("Server responded with unknown type: %u\n",  replay.packet.header.type);
-                }
-            }
-
         } while(0);
-
-        if (!isOk(result)) {
-            print_string("❌ Server not responding\n");
-        }
-
     }
-
-    socket_close(sockfd);
 }
 /***********************************************************************************************/
