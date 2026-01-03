@@ -54,24 +54,6 @@ int socket_close(int sock);
 int socket_send_data(int sock, void* buff, ssize_t sz);
 
 /**
- * @brief Add IP address to TUN interface
- *
- * @param ifname Interface name
- * @param ip_str IP address string
- * @return 0 on success, -1 on error
- */
-int tun_add_ip(const char *ifname, const char *ip_str);
-
-/**
- * @brief Check if TUN interface has specific IP address
- *
- * @param ifname Interface name
- * @param ip_str IP address string (e.g., "10.0.0.2")
- * @return 1 if IP is configured, 0 otherwise
- */
-int tun_has_ip(const char *ifname, const char *ip_str);
-
-/**
  * @brief Reads data from a socket with a timeout.
  *
  * Uses `poll()` to wait for data on the given socket for a specified time,
@@ -85,23 +67,47 @@ int tun_has_ip(const char *ifname, const char *ip_str);
  */
 int socket_read_data(int sock, void *buff, ssize_t *sz, int timeout_ms);
 
+/**
+ * @brief Create and connect a non-blocking TCP client socket.
+ *
+ * Creates a TCP socket, optionally binds it to a local IP/port,
+ * switches the socket to non-blocking mode and connects to the
+ * specified server with timeout control.
+ *
+ * @param[out] ssock        Pointer to store connected socket descriptor
+ * @param[in]  local_ip     Optional local IPv4 address to bind
+ *                          (NULL or empty string to skip bind)
+ * @param[in]  local_port   Local TCP port for bind (used if local_ip is set)
+ * @param[in]  server_ip    Remote server IPv4 address
+ * @param[in]  server_port  Remote server TCP port
+ *
+ * @return
+ *  - RESULT_OK on successful connection
+ *  - RESULT_ARGUMENT_ERROR on invalid arguments
+ *  - RESULT_SOCKET_CREATE_ERROR if socket() fails
+ *  - RESULT_INET_PTON_ERROR if IP address conversion fails
+ *  - RESULT_SOCKET_BIND_ERROR if bind() fails
+ *  - RESULT_SOCKET_CONNECT_TIMEOUT on connection timeout
+ *  - RESULT_SOCKET_CONNECT_ERROR on connection failure
+ */
 int socket_tcp_client_create(int *ssock, const char *local_ip, u16 local_port, const char *server_ip, u16 server_port);
 
 /**
- * @brief Allocate a TUN interface
+ * @brief Initialize TUN interface and assign IP address.
  *
- * @param devname Desired interface name (e.g., "tun0")
- * @return File descriptor for TUN interface, or -1 on failure
- */
-int tun_alloc(char *devname);
-
-/**
- * @brief Set TUN interface UP
+ * Allocates a TUN device, brings it up and ensures that the specified
+ * IP address is assigned to the interface.
  *
- * @param ifname Interface name
- * @return 0 on success, -1 on failure
+ * @param[in]  device  Name of the TUN device (e.g. "tun0")
+ * @param[in]  tun_ip  IP address to assign to the TUN interface
+ * @param[out] tun_fd  Pointer to store TUN device file descriptor
+ *
+ * @return
+ *  - RESULT_OK on success
+ *  - RESULT_NOT_INITED if TUN exists but has no IP assigned
+ *  - Other RESULT_* codes returned by helper functions
  */
-int tun_set_up(const char *ifname);
+int tup_init(const char *device, const char *tun_ip, int *tun_fd);
 
 /**
  * @brief Read a packet from TUN interface

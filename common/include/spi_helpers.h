@@ -15,12 +15,18 @@ typedef struct __attribute__((packed)) {
 } spi_ip_hdr_t;
 /***********************************************************************************************/
 /**
- * @brief Initialize SPI device
+ * @brief Initialize SPI device using spidev interface.
  *
- * @param device SPI device path (e.g., "/dev/spidev0.0")
- * @return SPI file descriptor, or -1 on error
+ * Opens SPI device file and configures basic SPI parameters:
+ * mode, bits per word and clock speed.
+ *
+ * @param[in] device Path to spidev device (e.g. "/dev/spidev0.0")
+ *
+ * @return
+ *  - File descriptor (>= 0) on success
+ *  - -1 on error (open or ioctl failure)
  */
-int spi_init(const char *device);
+int spi_init(const char *device, int *spi_fd);
 
 /**
  * @brief Receive an SPI packet including header and CRC check

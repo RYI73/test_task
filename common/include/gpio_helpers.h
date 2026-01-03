@@ -4,18 +4,25 @@
 
 /***********************************************************************************************/
 /**
- * @brief Export a GPIO via sysfs
+ * @brief Initialize GPIO via gpiochip device.
  *
- * @param gpio Global Linux GPIO number
- * @return 0 on success, -1 on error
- */
-int export_gpio(int gpio);
-
-/**
- * @brief Read GPIO chip base number
+ * Opens gpiochip device, reads its base GPIO number and exports
+ * a GPIO line using the provided offset.
  *
- * @return Base GPIO number, or -1 on error
+ * @param[in]  device   Path to gpiochip device (e.g. "/dev/gpiochip0")
+ * @param[in]  offset   GPIO offset relative to gpiochip base
+ * @param[out] gpio_fd  Pointer to store opened device file descriptor
+ *
+ * @return
+ *  - RESULT_OK on success
+ *  - RESULT_FILE_OPEN_ERROR if device open fails
+ *  - Other RESULT_* codes returned by helper functions
+ *
+ * @note
+ *  - This function opens the gpiochip device in read-only mode.
+ *  - GPIO number is calculated as (gpiochip base + offset).
+ *  - Caller is responsible for closing @p gpio_fd.
  */
-int read_gpiochip_base(void);
+int gpio_init(const char *device, int offset, int *gpio_fd);
 
 /***********************************************************************************************/

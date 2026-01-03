@@ -1,9 +1,7 @@
 #pragma once
 
 /***********************************************************************************************/
-#define INTERFACE_NAME_TUN0                     "tun0"
 /***********************************************************************************************/
-#define DEVICE_TUN                              "/dev/net/tun"
 #define PROC_PATH                               "/proc"
 #define DEV_NULL_PATH                           "/dev/null"
 /***********************************************************************************************/
@@ -55,6 +53,10 @@
 #define SPI_MAGIC                               0x49504657      /**< Magic constant ('IPFW') for SPI framing */
 #define SPI_PROTO_VERSION                       1
 #define PKT_LEN                                 256
+
+/** TUN device settings */
+#define TUN_DEVICE                              "/dev/net/tun"
+#define INTERFACE_NAME_TUN0                     "tun0"
 
 /** GPIO handshake definitions */
 #define GPIO_READY_SYSFS                        "/sys/class/gpio/gpio537/value"

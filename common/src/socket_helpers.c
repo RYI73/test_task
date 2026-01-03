@@ -44,6 +44,175 @@
 #include "socket_helpers.h"
 
 /***********************************************************************************************/
+/* Internal functions                                                                          */
+/***********************************************************************************************/
+static int tun_alloc(char *if_name, int *tun_fd)
+{
+    struct ifreq ifr = {0};
+    int fd = -1;
+    const char *dev_name = TUN_DEVICE;
+    int result = RESULT_NOT_INITED;
+
+    do {
+        if (if_name == NULL || tun_fd == NULL) {
+            result = RESULT_ARGUMENT_ERROR;
+            break;
+        }
+
+        fd = open(dev_name, O_RDWR);
+        if (fd < 0) {
+            log_msg(LOG_ERR, "Unable to open device %s: '%s'", dev_name, strerror(errno));
+            result = RESULT_FILE_OPEN_ERROR;
+            break;
+        }
+
+        ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
+        strncpy(ifr.ifr_name, if_name, IFNAMSIZ);
+
+        if (ioctl(fd, TUNSETIFF, (void *)&ifr) < 0) {
+            log_msg(LOG_ERR, "ioctl error of device %s: '%s'", dev_name, strerror(errno));
+            result = RESULT_FILE_IOCTL_ERROR;
+            break;
+        }
+
+        result = RESULT_OK;
+        log_msg(LOG_INFO, "TUN interface %s created\n", ifr.ifr_name);
+
+    } while(0);
+
+    if (!isOk(result) && fd > 0) {
+        close(fd);
+        fd = -1;
+    }
+
+    *tun_fd = fd;
+
+    return result;
+}
+/***********************************************************************************************/
+static int tun_set_up(const char *ifname)
+{
+    struct ifreq ifr = {0};
+    int sock = -1;
+    int result = RESULT_NOT_INITED;
+
+    do {
+        sock = socket(AF_INET, SOCK_DGRAM, 0);
+        if (sock < 0) {
+            log_msg(LOG_ERR, "Socket creation failed, errno = %d [%s]", errno, strerror(errno));
+            result = RESULT_SOCKET_CREATE_ERROR;
+            break;
+        }
+
+        strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+
+        if (ioctl(sock, SIOCGIFFLAGS, &ifr) < 0) {
+            log_msg(LOG_ERR, "SIOCGIFFLAGS error: '%s'", strerror(errno));
+            result = RESULT_SOCKET_IOCTL_ERROR;
+            break;
+        }
+
+        if (!(ifr.ifr_flags & IFF_UP)) {
+            ifr.ifr_flags |= IFF_UP;
+            if (ioctl(sock, SIOCSIFFLAGS, &ifr) < 0) {
+                log_msg(LOG_ERR, "SIOCSIFFLAGS with IFF_UP flag error: '%s'", strerror(errno));
+                result = RESULT_SOCKET_IOCTL_ERROR;
+                break;
+            }
+        }
+
+        result = RESULT_OK;
+        log_msg(LOG_INFO, "Interface %s set UP", ifname);
+
+    } while(0);
+
+    if (sock > 0) {
+        close(sock);
+    }
+
+    return result;
+}
+/***********************************************************************************************/
+static int tun_has_ip(const char *ifname, const char *ip_str)
+{
+    struct ifreq ifr = {0};
+    struct sockaddr_in *addr;
+    int result = RESULT_NOT_INITED;
+    int sock = -1;
+
+    do {
+        sock = socket(AF_INET, SOCK_DGRAM, 0);
+        if (sock < 0) {
+            log_msg(LOG_ERR, "Socket creation failed, errno = %d [%s]", errno, strerror(errno));
+            result = RESULT_SOCKET_CREATE_ERROR;
+            break;
+        }
+
+        strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+
+        if (ioctl(sock, SIOCGIFADDR, &ifr) < 0) {
+            break; /**< Specified IP not set yet */
+        }
+
+        addr = (struct sockaddr_in *)&ifr.ifr_addr;
+
+        if (strcmp(inet_ntoa(addr->sin_addr), ip_str) != 0) {
+            break; /**< Specified IP not set yet */
+        }
+
+        result = RESULT_OK;
+
+    } while(0);
+
+    if (sock > 0) {
+        close(sock);
+    }
+
+    return result;
+}
+/***********************************************************************************************/
+static int tun_add_ip(const char *ifname, const char *ip_str)
+{
+    struct ifreq ifr = {0};
+    struct sockaddr_in addr = {0};
+    int sock = -1;
+    int result = RESULT_NOT_INITED;
+
+    do {
+        sock = socket(AF_INET, SOCK_DGRAM, 0);
+        if (sock < 0) {
+            log_msg(LOG_ERR, "Socket creation failed, errno = %d [%s]", errno, strerror(errno));
+            result = RESULT_SOCKET_CREATE_ERROR;
+            break;
+        }
+
+        strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+
+        addr.sin_family = AF_INET;
+        inet_pton(AF_INET, ip_str, &addr.sin_addr);
+        memcpy(&ifr.ifr_addr, &addr, sizeof(addr));
+
+        if (ioctl(sock, SIOCSIFADDR, &ifr) < 0) {
+            log_msg(LOG_ERR, "SIOCSIFADDR error = %d [%s]", errno, strerror(errno));
+            result = RESULT_SOCKET_IOCTL_ERROR;
+            break;
+        }
+
+        log_msg(LOG_INFO, "IP %s added to %s\n", ip_str, ifname);
+
+        result = RESULT_OK;
+
+    } while(0);
+
+    if (sock > 0) {
+        close(sock);
+    }
+
+    return result;
+}
+/***********************************************************************************************/
+/* External functions                                                                          */
+/***********************************************************************************************/
 int socket_tcp_server_create(int *ssock, const char *server_ip, u16 server_port, int backlog)
 {
     int result = RESULT_NOT_INITED_ERROR;
@@ -357,110 +526,35 @@ int socket_read_data(int sock, void *buff, ssize_t *sz, int timeout_ms)
     return result;
 }
 /***********************************************************************************************/
-int tun_alloc(char *devname)
+int tup_init(const char *device, const char *tun_ip, int *tun_fd)
 {
-    struct ifreq ifr;
-    int fd;
+    int result = RESULT_OK;
+    int fd = -1;
 
-    if ((fd = open("/dev/net/tun", O_RDWR)) < 0) {
-        perror("tun open");
-        return -1;
-    }
-
-    memset(&ifr, 0, sizeof(ifr));
-    ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
-    if (devname)
-        strncpy(ifr.ifr_name, devname, IFNAMSIZ);
-
-    if (ioctl(fd, TUNSETIFF, (void *)&ifr) < 0) {
-        perror("tun ioctl");
-        close(fd);
-        return -1;
-    }
-
-    printf("TUN interface %s created\n", ifr.ifr_name);
-    return fd;
-}
-/***********************************************************************************************/
-int tun_set_up(const char *ifname)
-{
-    struct ifreq ifr;
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) {
-        perror("socket");
-        return -1;
-    }
-
-    memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
-
-    if (ioctl(sock, SIOCGIFFLAGS, &ifr) < 0) {
-        perror("SIOCGIFFLAGS");
-        close(sock);
-        return -1;
-    }
-
-    if (!(ifr.ifr_flags & IFF_UP)) {
-        ifr.ifr_flags |= IFF_UP;
-        if (ioctl(sock, SIOCSIFFLAGS, &ifr) < 0) {
-            perror("SIOCSIFFLAGS");
-            close(sock);
-            return -1;
+    do {
+        result = tun_alloc((char *)device, &fd);
+        if (!isOk(result)) {
+            break;
         }
-        printf("Interface %s set UP\n", ifname);
-    }
 
-    close(sock);
-    return 0;
-}
-/***********************************************************************************************/
-int tun_has_ip(const char *ifname, const char *ip_str)
-{
-    struct ifreq ifr;
-    struct sockaddr_in *addr;
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) return 0;
+        result = tun_set_up(device);
+        if (!isOk(result)) {
+            break;
+        }
 
-    memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
+        result = tun_has_ip(device, tun_ip);
+        if (isOk(result) || result == RESULT_NOT_INITED) {
+            result = tun_add_ip(device, tun_ip);
+            if (!isOk(result)) {
+                break;
+            }
+        }
 
-    if (ioctl(sock, SIOCGIFADDR, &ifr) < 0) {
-        close(sock);
-        return 0;   /**< IP not set yet */
-    }
+    } while(0);
 
-    addr = (struct sockaddr_in *)&ifr.ifr_addr;
-    close(sock);
+    *tun_fd = fd;
 
-    return strcmp(inet_ntoa(addr->sin_addr), ip_str) == 0;
-}
-/***********************************************************************************************/
-int tun_add_ip(const char *ifname, const char *ip_str)
-{
-    struct ifreq ifr;
-    struct sockaddr_in addr;
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) {
-        perror("socket");
-        return -1;
-    }
-
-    memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
-
-    addr.sin_family = AF_INET;
-    inet_pton(AF_INET, ip_str, &addr.sin_addr);
-    memcpy(&ifr.ifr_addr, &addr, sizeof(addr));
-
-    if (ioctl(sock, SIOCSIFADDR, &ifr) < 0) {
-        perror("SIOCSIFADDR");
-        close(sock);
-        return -1;
-    }
-
-    close(sock);
-    printf("IP %s added to %s\n", ip_str, ifname);
-    return 0;
+    return result;
 }
 /***********************************************************************************************/
 ssize_t read_tun_packet(int tun_fd, uint8_t *buf)

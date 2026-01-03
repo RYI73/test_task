@@ -45,59 +45,138 @@
 #include "socket_helpers.h"
 
 /***********************************************************************************************/
-int export_gpio(int gpio)
+/* Internal functions                                                                          */
+/***********************************************************************************************/
+/**
+ * @brief Export a GPIO via sysfs
+ *
+ * @param gpio Global Linux GPIO number
+ * @return 0 on success, -1 on error
+ */
+static int export_gpio(int gpio)
 {
-    int fd = open(GPIO_EXPORT, O_WRONLY);
-    if (fd < 0) {
-        perror("open export");
-        return -1;
-    }
-
+    int fd = -1;
     char buf[16];
-    int len = snprintf(buf, sizeof(buf), "%d", gpio);
+    int len = 0;
+    int result = RESULT_OK;
 
-    if (write(fd, buf, len) < 0) {
-        if (errno != EBUSY)   // already exported — не помилка
-            perror("write export");
+    do {
+        fd = open(GPIO_EXPORT, O_WRONLY);
+        if (fd < 0) {
+            log_msg(LOG_ERR, "Unable to open %s: %s", GPIO_EXPORT, strerror(errno));
+            result = RESULT_FILE_OPEN_ERROR;
+            break;
+        }
+
+        len = snprintf(buf, sizeof(buf), "%d", gpio);
+
+        if (write(fd, buf, len) < 0) {
+            if (errno != EBUSY) {  // EBUSY: already exported — not error.
+                log_msg(LOG_ERR, "Write export failed: %s", strerror(errno));
+                result = RESULT_FILE_WRITE_ERROR;
+                break;
+            }
+        }
+
+    } while(0);
+
+    if (fd > 0) {
+        close(fd);
     }
 
-    close(fd);
-    return 0;
+    return result;
 }
 /***********************************************************************************************/
-int read_gpiochip_base(void)
+/**
+ * @brief Read GPIO chip base number
+ *
+ * @return Base GPIO number, or -1 on error
+ */
+static int read_gpiochip_base(int *number)
 {
-    DIR *dir = opendir(GPIO_CLASS);
-    if (!dir) {
-        perror("opendir");
-        return -1;
-    }
-
+    int fd = -1;
+    int gpio_number = -1;
+    DIR *dir = NULL;
     struct dirent *ent;
     char path[256];
     char buf[32];
+    int result = RESULT_NODATA;
 
-    while ((ent = readdir(dir)) != NULL) {
-        if (strncmp(ent->d_name, "gpiochip", 8) == 0) {
-            snprintf(path, sizeof(path),
-                     GPIO_BASE, ent->d_name);
+    do {
+        dir = opendir(GPIO_CLASS);
+        if (!dir) {
+            log_msg(LOG_ERR, "Unable to open DIR %s: '%s'", GPIO_CLASS, strerror(errno));
+            result = RESULT_FILE_OPEN_ERROR;
+            break;
+        }
 
-            int fd = open(path, O_RDONLY);
-            if (fd < 0)
-                continue;
+        while ((ent = readdir(dir)) != NULL) {
+            if (strncmp(ent->d_name, "gpiochip", 8) == 0) {
+                snprintf(path, sizeof(path), GPIO_BASE, ent->d_name);
 
-            ssize_t n = read(fd, buf, sizeof(buf) - 1);
-            close(fd);
+                fd = open(path, O_RDONLY);
+                if (fd < 0) {
+                    continue;
+                }
 
-            if (n > 0) {
-                buf[n] = '\0';
-                closedir(dir);
-                return atoi(buf);
+                ssize_t n = read(fd, buf, sizeof(buf) - 1);
+                close(fd);
+
+                if (n > 0) {
+                    buf[n] = '\0';
+                    gpio_number = atoi(buf);
+                    result = RESULT_OK;
+                    break;
+                }
             }
         }
+
+    } while(0);
+
+    if (dir != NULL) {
+        closedir(dir);
     }
 
-    closedir(dir);
-    return -1;
+    *number = gpio_number;
+
+    return result;
+}
+/***********************************************************************************************/
+/* External functions                                                                          */
+/***********************************************************************************************/
+int gpio_init(const char *device, int offset, int *gpio_fd)
+{
+    int result = RESULT_NOT_INITED;
+    int fd = -1;
+    int base = -1;
+    int gpio = -1;
+
+    do {
+        fd = open(device, O_RDONLY);
+        if (fd < 0) {
+            log_msg(LOG_ERR, "Unable to open device '%s': %s", device, strerror(errno));
+            result = RESULT_FILE_OPEN_ERROR;
+            break;
+        }
+
+        // Export GPIO
+        result = read_gpiochip_base(&base);
+        if (!isOk(result)) {
+            log_msg(LOG_ERR, "Failed to read gpiochip base");
+            break;
+        }
+
+        gpio = base + offset;
+
+        log_msg(LOG_INFO, "gpiochip base = %d\n", base);
+        log_msg(LOG_INFO, "Exporting GPIO %d (offset %d)\n", gpio, offset);
+
+        result = export_gpio(gpio);
+
+    } while(0);
+
+    *gpio_fd = fd;
+
+    return result;
 }
 /***********************************************************************************************/

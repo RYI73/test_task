@@ -52,24 +52,7 @@ static uint8_t spi_send_rx_buff[PKT_LEN + 1];
 static uint8_t rx_buff[PKT_LEN + 1];
 
 /***********************************************************************************************/
-int spi_init(const char *device)
-{
-    int fd = open(device, O_RDWR);
-    if (fd < 0) {
-        perror("open spidev");
-        return -1;
-    }
-
-    uint8_t mode = SPI_MODE;
-    uint8_t bits = SPI_BITS;
-    uint32_t speed = SPI_SPEED;
-
-    ioctl(fd, SPI_IOC_WR_MODE, &mode);
-    ioctl(fd, SPI_IOC_WR_BITS_PER_WORD, &bits);
-    ioctl(fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed);
-
-    return fd;
-}
+/* Internal functions                                                                          */
 /***********************************************************************************************/
 int spi_recv_transfer(int spi_fd, int gpio_fd, uint8_t *out)
 {
@@ -228,5 +211,35 @@ int spi_send_packet(int spi_fd, int gpio_fd, uint8_t *data, uint16_t len)
     }
 
     return 0;
+}
+/***********************************************************************************************/
+/* External functions                                                                          */
+/***********************************************************************************************/
+int spi_init(const char *device, int *spi_fd)
+{
+    int result = RESULT_OK;
+    int fd = -1;
+
+    do {
+        fd = open(device, O_RDWR);
+        if (fd < 0) {
+            log_msg(LOG_ERR, "Unable to open device %s: '%s'", device, strerror(errno));
+            result = RESULT_FILE_OPEN_ERROR;
+            break;
+        }
+
+        uint8_t mode = SPI_MODE;
+        uint8_t bits = SPI_BITS;
+        uint32_t speed = SPI_SPEED;
+
+        ioctl(fd, SPI_IOC_WR_MODE, &mode);
+        ioctl(fd, SPI_IOC_WR_BITS_PER_WORD, &bits);
+        ioctl(fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed);
+
+    } while(0);
+
+    *spi_fd = fd;
+
+    return result;
 }
 /***********************************************************************************************/
