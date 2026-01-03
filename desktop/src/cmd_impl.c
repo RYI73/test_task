@@ -132,7 +132,8 @@ static int cmd_transaction(packet_t *request, packet_t *replay)
         }
 
         /* Validate reply */
-        if (isOk(protocol_packet_validate(replay))) {
+        int res = protocol_packet_validate(replay);
+        if (isOk(res)) {
             if (replay->packet.header.type == PACKET_TYPE_ANSWER) {
                 if (isOk(replay->packet.header.answer_result)) {
                     print_string("Server responded OK on packet %u\n",  replay->packet.header.answer_sequence);
@@ -144,6 +145,9 @@ static int cmd_transaction(packet_t *request, packet_t *replay)
             else {
                 print_string("Server responded with unknown type: %u\n",  replay->packet.header.type);
             }
+        }
+        else {
+            print_string("❌ broken package. error %u\n", res);
         }
     } while(0);
 
