@@ -55,6 +55,7 @@ static int tun_alloc(char *if_name, int *tun_fd)
 
     do {
         if (if_name == NULL || tun_fd == NULL) {
+            log_msg(LOG_ERR, "Arguments error");
             result = RESULT_ARGUMENT_ERROR;
             break;
         }
@@ -97,6 +98,12 @@ static int tun_set_up(const char *ifname)
     int result = RESULT_NOT_INITED;
 
     do {
+        if (ifname == NULL) {
+            log_msg(LOG_ERR, "Arguments error");
+            result = RESULT_ARGUMENT_ERROR;
+            break;
+        }
+
         sock = socket(AF_INET, SOCK_DGRAM, 0);
         if (sock < 0) {
             log_msg(LOG_ERR, "Socket creation failed, errno = %d [%s]", errno, strerror(errno));
@@ -139,6 +146,12 @@ static int tun_has_ip(const char *ifname, const char *ip_str)
     int sock = -1;
 
     do {
+        if (ifname == NULL || ip_str == NULL) {
+            log_msg(LOG_ERR, "Arguments error");
+           result = RESULT_ARGUMENT_ERROR;
+            break;
+        }
+
         sock = socket(AF_INET, SOCK_DGRAM, 0);
         if (sock < 0) {
             log_msg(LOG_ERR, "Socket creation failed, errno = %d [%s]", errno, strerror(errno));
@@ -175,6 +188,11 @@ static int tun_add_ip(const char *ifname, const char *ip_str)
     int result = RESULT_NOT_INITED;
 
     do {
+        if (ifname == NULL || ip_str == NULL) {
+            result = RESULT_ARGUMENT_ERROR;
+            break;
+        }
+
         sock = socket(AF_INET, SOCK_DGRAM, 0);
         if (sock < 0) {
             log_msg(LOG_ERR, "Socket creation failed, errno = %d [%s]", errno, strerror(errno));
@@ -443,95 +461,126 @@ int socket_send_data(int sock, void* buff, ssize_t sz)
 {
     const uint8_t *p = buff;
     size_t left = sz;
+    int64_t deadline = 0;
+    int64_t remaining = 0;
+    int pr = -1;
+    int result = RESULT_OK;
 
-    int flags = fcntl(sock, F_GETFL, 0);
-    if (flags < 0)
-        return RESULT_SOCKET_SEND_ERROR;
-
-    if (!(flags & O_NONBLOCK)) {
-        if (fcntl(sock, F_SETFL, flags | O_NONBLOCK) < 0)
-            return RESULT_SOCKET_SEND_ERROR;
-    }
-
-    int64_t deadline = now_ms() + POLL_TIMEOUT_MS;
-
-    while (left > 0) {
-
-        ssize_t n = write(sock, p, left);
-
-        if (n > 0) {
-            p += n;
-            left -= n;
-            continue;
+    do {
+        if (!buff || !sz) {
+            log_msg(LOG_ERR, "Arguments error");
+            result = RESULT_ARGUMENT_ERROR;
+            break;
         }
 
-        if (n == 0) {
-            log_msg(LOG_ERR, "socket closed by peer");
-            return RESULT_SOCKET_SEND_ERROR;
+        int flags = fcntl(sock, F_GETFL, 0);
+        if (flags < 0) {
+            result = RESULT_SOCKET_SEND_ERROR;
+            break;
         }
 
-        if (errno == EINTR)
-            continue;
-
-        if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            log_msg(LOG_ERR, "write failed: %s", strerror(errno));
-            return RESULT_SOCKET_SEND_ERROR;
+        if (!(flags & O_NONBLOCK)) {
+            if (fcntl(sock, F_SETFL, flags | O_NONBLOCK) < 0) {
+                result = RESULT_SOCKET_SEND_ERROR;
+                break;
+            }
         }
 
-        int64_t remaining = deadline - now_ms();
-        if (remaining <= 0) {
-            log_msg(LOG_ERR, "socket send timeout");
-            return RESULT_SOCKET_SEND_TIMEOUT;
-        }
+        deadline = now_ms() + POLL_TIMEOUT_MS;
 
-        struct pollfd pfd = {
-            .fd = sock,
-            .events = POLLOUT
-        };
+        while (left > 0) {
 
-        int pr = poll(&pfd, 1, (int)remaining);
-        if (pr < 0) {
-            if (errno == EINTR)
+            ssize_t n = write(sock, p, left);
+            if (n > 0) {
+                p += n;
+                left -= n;
                 continue;
-            log_msg(LOG_ERR, "poll error: %s", strerror(errno));
-            return RESULT_SOCKET_SEND_ERROR;
-        }
+            }
 
-        if (pr == 0) {
-            log_msg(LOG_ERR, "socket send timeout");
-            return RESULT_SOCKET_SEND_TIMEOUT;
-        }
+            if (n == 0) {
+                log_msg(LOG_ERR, "socket closed by peer");
+                result = RESULT_SOCKET_SEND_ERROR;
+                break;
+            }
 
-        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
-            log_msg(LOG_ERR, "socket error revents=0x%x", pfd.revents);
-            return RESULT_SOCKET_SEND_ERROR;
-        }
-    }
+            if (errno == EINTR) {
+                continue;
+            }
 
-    return RESULT_OK;
+            if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                log_msg(LOG_ERR, "write failed: %s", strerror(errno));
+                result = RESULT_SOCKET_SEND_ERROR;
+                break;
+            }
+
+            remaining = deadline - now_ms();
+            if (remaining <= 0) {
+                log_msg(LOG_ERR, "socket send timeout");
+                result = RESULT_SOCKET_SEND_TIMEOUT;
+                break;
+            }
+
+            struct pollfd pfd = {
+                .fd = sock,
+                .events = POLLOUT
+            };
+
+            pr = poll(&pfd, 1, (int)remaining);
+            if (pr < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                log_msg(LOG_ERR, "poll error: %s", strerror(errno));
+                result = RESULT_SOCKET_SEND_ERROR;
+                break;
+            }
+
+            if (pr == 0) {
+                log_msg(LOG_ERR, "socket send timeout");
+                result = RESULT_SOCKET_SEND_TIMEOUT;
+                break;
+            }
+
+            if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+                log_msg(LOG_ERR, "socket error revents=0x%x", pfd.revents);
+                result = RESULT_SOCKET_SEND_ERROR;
+                break;
+            }
+        }
+    } while(0);
+
+    return result;
 }
 /***********************************************************************************************/
 int socket_read_data(int sock, void *buff, ssize_t *sz, int timeout_ms)
 {
+    static struct pollfd pollfds[1];
     int result = RESULT_NODATA;
 
-    static struct pollfd pollfds[1];
+    do {
+        if (!buff || !sz) {
+            log_msg(LOG_ERR, "Arguments error");
+            result = RESULT_ARGUMENT_ERROR;
+            break;
+        }
 
-    pollfds[0].fd = sock;
-    pollfds[0].events = POLLIN | POLLPRI;
+        pollfds[0].fd = sock;
+        pollfds[0].events = POLLIN | POLLPRI;
 
-    int poll_result = poll(pollfds, 1, timeout_ms);
-    if (poll_result > 0) {
-        if (pollfds[0].revents & POLLIN) {
-            struct sockaddr_ll sll;
-            socklen_t sll_len = sizeof(sll);
-            *sz = recvfrom(sock, buff, *sz, 0, (struct sockaddr*)&sll, &sll_len);
+        int poll_result = poll(pollfds, 1, timeout_ms);
+        if (poll_result > 0) {
+            if (pollfds[0].revents & POLLIN) {
+                struct sockaddr_ll sll;
+                socklen_t sll_len = sizeof(sll);
+                *sz = recvfrom(sock, buff, *sz, 0, (struct sockaddr*)&sll, &sll_len);
 
-            if (sll.sll_pkttype != PACKET_OUTGOING && *sz > 0) {
-                result = RESULT_OK;
+                if (sll.sll_pkttype != PACKET_OUTGOING && *sz > 0) {
+                    result = RESULT_OK;
+                }
             }
         }
-    }
+    } while(0);
+
     return result;
 }
 /***********************************************************************************************/
@@ -541,6 +590,12 @@ int tup_init(const char *device, const char *tun_ip, int *tun_fd)
     int fd = -1;
 
     do {
+        if (!device || !tun_ip || !tun_fd) {
+            log_msg(LOG_ERR, "Arguments error");
+            result = RESULT_ARGUMENT_ERROR;
+            break;
+        }
+
         result = tun_alloc((char *)device, &fd);
         if (!isOk(result)) {
             break;
@@ -569,29 +624,48 @@ int tup_init(const char *device, const char *tun_ip, int *tun_fd)
 ssize_t read_tun_packet(int tun_fd, uint8_t *buf)
 {
     static int nonblock_set = 0;
-    if (!nonblock_set) {
-        int flags = fcntl(tun_fd, F_GETFL, 0);
-        fcntl(tun_fd, F_SETFL, flags | O_NONBLOCK);
-        nonblock_set = 1;
-    }
+    ssize_t n = -1;
 
-    ssize_t n = read(tun_fd, buf, MAX_PKT_SIZE);
-    if (n < 0) {
-        if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            log_msg(LOG_ERR, "TUN read error: %s", strerror(errno));
+    do {
+        if (!buf) {
+            log_msg(LOG_ERR, "Arguments error");
+            break;
         }
 
-        return 0;
-    }
+        if (!nonblock_set) {
+            int flags = fcntl(tun_fd, F_GETFL, 0);
+            fcntl(tun_fd, F_SETFL, flags | O_NONBLOCK);
+            nonblock_set = 1;
+        }
+
+        n = read(tun_fd, buf, MAX_PKT_SIZE);
+        if (n < 0) {
+            if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                log_msg(LOG_ERR, "TUN read error: %s", strerror(errno));
+            }
+            n = 0;
+            break;
+        }
+    } while(0);
+
     return n;
 }
 /***********************************************************************************************/
 ssize_t write_tun_packet(int tun_fd, uint8_t *buf, size_t len)
 {
-    ssize_t n = write(tun_fd, buf, len);
-    if (n < 0) {
-        log_msg(LOG_ERR, "TUN write error: %s", strerror(errno));
-    }
+    ssize_t n = -1;
+    do {
+        if (!buf) {
+            log_msg(LOG_ERR, "Arguments error");
+            break;
+        }
+
+        n = write(tun_fd, buf, len);
+        if (n < 0) {
+            log_msg(LOG_ERR, "TUN write error: %s", strerror(errno));
+        }
+    } while(0);
+
     return n;
 }
 /***********************************************************************************************/

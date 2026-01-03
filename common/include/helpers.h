@@ -9,29 +9,22 @@
 
 #include "types.h"
 
-/***********************************************************************************************/
 /**
- * @brief Prints a hexadecimal and ASCII dump of a memory buffer.
+ * @brief Thread-safe printf wrapper.
  *
- * This function takes a pointer to a buffer and its size, and prints a formatted
- * hex dump to standard output. Each line contains 16 bytes in hexadecimal format,
- * followed by the corresponding printable ASCII characters (non-printable characters
- * are replaced with a dot `.`).
+ * This function prints a formatted string to standard output (stdout)
+ * in a thread-safe manner, using a mutex or similar lock mechanism.
  *
- * The output format looks like:
- * ```
- * 000000h: 48 65 6C 6C 6F 20 77 6F 72 6C 64 21 0A         | Hello world!.
- * ```
+ * @param[in] message Format string (like in printf)
+ * @param[in] ...     Variadic arguments to be formatted according to the format string
  *
- * @param buff Pointer to the input buffer (`u8 *`), which contains the data to dump.
- * @param sz The number of bytes in the buffer to print.
+ * @note Uses LOCK/UNLOCK macros to ensure thread safety.
+ * @note Can be combined with GCC/Clang attribute:
+ *       __attribute__((format(printf, 1, 2))) to enable compile-time format checking.
  *
- * @note Printable characters are determined using `isalpha()` and `isdigit()`.
- *       Non-printable or control characters are displayed as `.`.
- *
- * @see printf(), isalpha(), isdigit()
+ * @example
+ * print_string("Hello %s, number=%d\n", "world", 42);
  */
-void print_dump(u8 *buff, u32 sz, char *pref);
 void print_string(const char* message, ...);
 
 /**
@@ -88,7 +81,7 @@ u16 crc16(const u8 *data, u32 length);
  * @param len Length of buffer in bytes
  * @return Computed CRC32 value
  */
-uint32_t crc32(uint32_t crc, const uint8_t *buf, size_t len);
+uint32_t crc32(u32 crc, const uint8_t *buf, size_t len);
 
 /**
  * @brief Converts all characters in a string to uppercase.
@@ -132,9 +125,48 @@ char *strupr(char *str);
  */
 void posix_putch(void *data, char ch, bool is_last);
 
+/**
+ * @brief Converts a hexadecimal string to a byte array.
+ *
+ * Parses a string containing hexadecimal digits and stores the result
+ * as binary bytes in the provided output buffer.
+ *
+ * @param[in]  str      Input string containing hexadecimal characters
+ * @param[out] out      Output buffer to store the bytes
+ * @param[in]  max_out  Maximum number of bytes that can be written to out
+ * @param[out] count    Number of bytes actually written to out
+ *
+ * @return 0 on success, non-zero on error (e.g., invalid characters or overflow)
+ *
+ * @note The input string may contain uppercase or lowercase hex digits.
+ */
 int hexstr_to_bytes(const char *str, uint8_t *out, size_t max_out, size_t *count);
+
+/**
+ * @brief Converts a byte array to a hexadecimal string.
+ *
+ * Converts the given byte array into a null-terminated string containing
+ * hexadecimal digits.
+ *
+ * @param[in]  data      Input byte array
+ * @param[in]  len       Number of bytes in the input array
+ * @param[out] out       Output buffer to store the hex string
+ * @param[in]  out_size  Size of the output buffer (including null terminator)
+ *
+ * @return 0 on success, non-zero if the output buffer is too small
+ */
 int bytes_to_hexstr(const uint8_t *data, size_t len, char *out, size_t out_size);
 
+/**
+ * @brief Returns current time in nanoseconds.
+ *
+ * Gets the current time using a monotonic clock and returns it as
+ * the number of nanoseconds since an unspecified starting point.
+ *
+ * @return Current time in nanoseconds
+ *
+ * @note Uses CLOCK_MONOTONIC to avoid issues with system clock changes.
+ */
 static inline u64 now_ns(void)
 {
     struct timespec ts;
@@ -142,6 +174,14 @@ static inline u64 now_ns(void)
     return (u64)ts.tv_sec * 1000000000ull + (u64)ts.tv_nsec;
 }
 
+/**
+ * @brief Returns current time in milliseconds.
+ *
+ * Convenience function that returns the current monotonic time in
+ * milliseconds by dividing now_ns() by 1,000,000.
+ *
+ * @return Current time in milliseconds
+ */
 static inline u32 now_ms(void)
 {
     return (u32)(now_ns() / 1000000);

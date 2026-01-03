@@ -111,6 +111,12 @@ static int cmd_transaction(packet_t *request, packet_t *replay)
     int result = RESULT_OK;
 
     do {
+        if (request == NULL || replay == NULL) {
+            log_msg(LOG_ERR, "Arguments error");
+            result = RESULT_ARGUMENT_ERROR;
+            break;
+        }
+
         result = socket_tcp_client_create(&sockfd, 0, 0, SERVER_ADDR, SERVER_PORT);
         if (!isOk(result)) {
             break;
@@ -153,7 +159,7 @@ static int cmd_transaction(packet_t *request, packet_t *replay)
 
     socket_close(sockfd);
 
-    if (!isOk(result)) {
+    if (!isOk(result) && result != RESULT_ARGUMENT_ERROR) {
         print_string("❌ Server unavailable\n");
     }
 

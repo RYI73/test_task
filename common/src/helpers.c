@@ -32,51 +32,13 @@ static pthread_mutex_t lock;
 
 /***********************************************************************************************/
 __attribute__((format(printf, 1, 2)))
-void print_string(const char* message, ...) {
+void print_string(const char* message, ...)
+{
     va_list args;
     LOCK(lock);
     va_start(args, message);
     vprintf(message, args);
     va_end(args);
-    UNLOCK(lock);
-}
-/***********************************************************************************************/
-void print_dump(u8 *buff, u32 sz, char *pref)
-{
-    LOCK(lock);
-    char str[64];
-    if (pref != NULL) {
-        snprintf(str, sizeof(str), "[%s] ", pref);
-    }
-    if (sz > MAX_DUMP_BUFFER_SIZE) {
-//        printf("Real dump buffer size %zu reduced to %zu bytes\n", sz, MAX_DUMP_BUFFER_SIZE);
-//        sz = MAX_DUMP_BUFFER_SIZE;
-    }
-    printf("%sDump (%u bytes):\r\n", pref==NULL?"":str, sz);
-    char symbols[16] = {0};
-    u32 symCntr = 0;
-    for (u32 j=0; j<sz; j++) {
-        if (j % 16 == 0) {
-            printf("%06Xh: ", j);
-        }
-        printf("%02X ", buff[j]);
-        symbols[symCntr++] = buff[j];
-        u32 p = j+1;
-        if (p % 16 == 0 || p == sz) {
-            if (p == sz && p % 16 != 0) {
-                for (u32 i=0; i<16 - p % 16; i++) {
-                    printf("   ");
-                }
-            }
-            printf("| ");
-            for (u32 i=0; i<symCntr; i++) {
-                printf("%c", (isalpha((int)symbols[i]) || isdigit((int)symbols[i])) ? symbols[i] : '.');
-            }
-            symCntr = 0;
-            printf("\n");
-        }
-    }
-    printf("\n");
     UNLOCK(lock);
 }
 /***********************************************************************************************/
@@ -122,7 +84,7 @@ void handle_sigint(int sig)
 }
 /***********************************************************************************************/
 /* Table for polynomial 0x8005 (reversed: 0xA001) */
-static const uint16_t crc16_table[256] = {
+static const u16 crc16_table[256] = {
     0x0000, 0xC0C1, 0xC181, 0x0140, 0xC301, 0x03C0, 0x0280, 0xC241,
     0xC601, 0x06C0, 0x0780, 0xC741, 0x0500, 0xC5C1, 0xC481, 0x0440,
     0xCC01, 0x0CC0, 0x0D80, 0xCD41, 0x0F00, 0xCFC1, 0xCE81, 0x0E40,
@@ -159,8 +121,8 @@ static const uint16_t crc16_table[256] = {
 
 #define CRC16_STEP(crc_, byte_) \
     do { \
-        uint8_t __idx = (uint8_t)((crc_) ^ (uint8_t)(byte_)); \
-        (crc_) = (uint16_t)(((crc_) >> 8) ^ crc16_table[__idx]); \
+        u8 __idx = (u8)((crc_) ^ (u8)(byte_)); \
+        (crc_) = (u16)(((crc_) >> 8) ^ crc16_table[__idx]); \
     } while (0)
 
 u16 crc16(const u8 * __restrict data, u32 length)
@@ -220,9 +182,9 @@ u16 crc16(const u8 * __restrict data, u32 length)
     return crc;
 }
 /***********************************************************************************************/
-uint32_t crc32(uint32_t crc, const uint8_t *buf, size_t len)
+u32 crc32(u32 crc, const u8 *buf, size_t len)
 {
-    uint32_t c = crc ^ 0xFFFFFFFF;
+    u32 c = crc ^ 0xFFFFFFFF;
     for (size_t i = 0; i < len; i++) {
         c ^= buf[i];
         for (int k = 0; k < 8; k++)
@@ -231,7 +193,7 @@ uint32_t crc32(uint32_t crc, const uint8_t *buf, size_t len)
     return c ^ 0xFFFFFFFF;
 }
 /***********************************************************************************************/
-int hexstr_to_bytes(const char *str, uint8_t *out, size_t max_out, size_t *count)
+int hexstr_to_bytes(const char *str, u8 *out, size_t max_out, size_t *count)
 {
     int result = RESULT_OK;
     *count = 0;
@@ -252,7 +214,7 @@ int hexstr_to_bytes(const char *str, uint8_t *out, size_t max_out, size_t *count
             return RESULT_FULL_BUFFER_ERROR;
         }
 
-        uint8_t byte = 0;
+        u8 byte = 0;
         for (int i = 0; i < 2; i++) {
             byte <<= 4;
             char c = *str++;
@@ -268,7 +230,7 @@ int hexstr_to_bytes(const char *str, uint8_t *out, size_t max_out, size_t *count
     return result;
 }
 /***********************************************************************************************/
-int bytes_to_hexstr(const uint8_t *data, size_t len, char *out, size_t out_size)
+int bytes_to_hexstr(const u8 *data, size_t len, char *out, size_t out_size)
 {
     int result = RESULT_OK;
 
