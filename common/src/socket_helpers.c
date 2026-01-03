@@ -80,8 +80,8 @@ static int tun_alloc(char *if_name, int *tun_fd)
 
     } while(0);
 
-    if (!isOk(result) && fd >= 0) {
-        close(fd);
+    if (!isOk(result)) {
+        fd_close(fd);
         fd = -1;
     }
 
@@ -126,9 +126,7 @@ static int tun_set_up(const char *ifname)
 
     } while(0);
 
-    if (sock > 0) {
-        close(sock);
-    }
+    socket_close(sock);
 
     return result;
 }
@@ -164,9 +162,7 @@ static int tun_has_ip(const char *ifname, const char *ip_str)
 
     } while(0);
 
-    if (sock > 0) {
-        close(sock);
-    }
+    socket_close(sock);
 
     return result;
 }
@@ -204,9 +200,7 @@ static int tun_add_ip(const char *ifname, const char *ip_str)
 
     } while(0);
 
-    if (sock > 0) {
-        close(sock);
-    }
+    socket_close(sock);
 
     return result;
 }
@@ -430,6 +424,21 @@ int socket_close(int sock)
     return result;
 }
 /***********************************************************************************************/
+int fd_close(int fd)
+{
+    int result = RESULT_ARGUMENT_ERROR;
+    if (fd >= 0) {
+        if (close(fd) < 0) {
+            log_msg(LOG_ERR, "Can't close fd %d, errno = %d [%s]", fd, errno, strerror(errno));
+            result = RESULT_FILE_CLOSE_ERROR;
+        }
+        else {
+            result = RESULT_OK;
+        }
+    }
+    return result;
+}
+/***********************************************************************************************/
 int socket_send_data(int sock, void* buff, ssize_t sz)
 {
     const uint8_t *p = buff;
@@ -569,7 +578,7 @@ ssize_t read_tun_packet(int tun_fd, uint8_t *buf)
     ssize_t n = read(tun_fd, buf, MAX_PKT_SIZE);
     if (n < 0) {
         if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            perror("read tun");
+            log_msg(LOG_ERR, "TUN read error: %s", strerror(errno));
         }
 
         return 0;
@@ -580,7 +589,9 @@ ssize_t read_tun_packet(int tun_fd, uint8_t *buf)
 ssize_t write_tun_packet(int tun_fd, uint8_t *buf, size_t len)
 {
     ssize_t n = write(tun_fd, buf, len);
-    if (n < 0) perror("write tun");
+    if (n < 0) {
+        log_msg(LOG_ERR, "TUN write error: %s", strerror(errno));
+    }
     return n;
 }
 /***********************************************************************************************/

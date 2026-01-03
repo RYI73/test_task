@@ -80,9 +80,7 @@ static int export_gpio(int gpio)
 
     } while(0);
 
-    if (fd >= 0) {
-        close(fd);
-    }
+    fd_close(fd);
 
     return result;
 }
@@ -120,7 +118,7 @@ static int read_gpiochip_base(int *number)
                 }
 
                 ssize_t n = read(fd, buf, sizeof(buf) - 1);
-                close(fd);
+                fd_close(fd);
 
                 if (n > 0) {
                     buf[n] = '\0';

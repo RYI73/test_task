@@ -70,7 +70,7 @@ void forward_loop(int tun_fd, int spi_fd, int gpio_fd, volatile bool *is_running
     while (*is_running) {
         int ret = poll(fds, 2, POLL_TIMEOUT_MS);
         if (ret < 0) {
-            if (errno == EINTR) {
+            if (errno == EINTR) { // is not fatal error -> continue
                 continue;
             }
             log_msg(LOG_ERR, "POLL error: %s", strerror(errno));
@@ -160,15 +160,9 @@ int main()
         forward_loop(tun_fd, spi_fd, gpio_fd, &is_running);
     } while(0);
 
-    if (gpio_fd >= 0) {
-        close(gpio_fd);
-    }
-    if (spi_fd >= 0) {
-        close(spi_fd);
-    }
-    if (tun_fd >= 0) {
-        close(tun_fd);
-    }
+    fd_close(gpio_fd);
+    fd_close(spi_fd);
+    fd_close(tun_fd);
 
     log_msg(LOG_INFO, "Proxy stopped. Exit code %u", result);
 
