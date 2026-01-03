@@ -20,7 +20,6 @@
 
 #include "cli.h"
 #include "cmd.h"
-#include "defines.h"
 #include "helpers.h"
 #include "socket_helpers.h"
 #include "logs.h"

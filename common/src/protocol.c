@@ -13,7 +13,6 @@
 #include <stddef.h>
 
 #include "logs.h"
-#include "defines.h"
 #include "protocol.h"
 #include "helpers.h"
 #include "error_code.h"

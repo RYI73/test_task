@@ -1,5 +1,5 @@
 /**
- * @file slave.c
+ * @file main.c
  * @brief ESP32 SPI slave router forwarding IPv4 packets to lwIP stack
  *
  * This program initializes the ESP32 as an SPI slave, receives IPv4 packets
@@ -22,7 +22,6 @@
 
 #include "esp_system.h"
 #include "esp_err.h"
-#include "esp_log.h"
 #include "nvs_flash.h"
 #include "esp_event.h"
 #include "esp_netif.h"
@@ -44,25 +43,9 @@
 #include "lwip/prot/ip4.h"
 #include "lwip/prot/tcp.h"
 
-/* ===================== CONFIG ===================== */
-#define TAG                         "L3_ROUTER"
-#define SPI_HOST                    SPI2_HOST
-#define PKT_LEN                     256
-#define SPI_MAGIC                   0x49504657   /**< Magic constant ('IPFW') for SPI framing */
-#define SPI_PROTO_VERSION           1
-#define WIFI_GOT_IP_BIT             BIT0
-
-/* SPI GPIOs */
-#define GPIO_SPI_READY              GPIO_NUM_16
-#define GPIO_MOSI                   13
-#define GPIO_MISO                   12
-#define GPIO_SCLK                   14
-#define GPIO_CS                     15
-
-#define SPI_TX_QUEUE_LEN            8
-
-#define WIFI_SSID                   "YOUR_WIFI_SSID"
-#define WIFI_PASS                   "YOUR_PASSWORD"
+#include "logs.h"
+#include "defaults.h"
+#include "error_code.h"
 
 /* ===================== GLOBALS ===================== */
 static EventGroupHandle_t wifi_event_group;
@@ -123,21 +106,6 @@ static void gpio_ready_init(void)
 }
 /***********************************************************************************************/
 /**
- * @brief Dump memory in hex format (max 128 bytes)
- */
-static void dump_bytes(const uint8_t *buf, int len)
-{
-    for (int i = 0; i < len && i < 128; i += 16) {
-        char line[96];
-        int n = snprintf(line, sizeof(line), "%04x: ", i);
-        for (int j = 0; j < 16 && i + j < len; j++) {
-            n += snprintf(line + n, sizeof(line) - n, "%02x ", buf[i + j]);
-        }
-        ESP_LOGI("DUMP", "%s", line);
-    }
-}
-/***********************************************************************************************/
-/**
  * @brief Called after SPI transaction setup, sets handshake high
  */
 void my_post_setup_cb(spi_slave_transaction_t *trans)
@@ -164,13 +132,13 @@ static void spi_ipv4_forward(const uint8_t *buf, size_t len)
 
     struct ip_hdr *iph = (struct ip_hdr *)buf;
     if (IPH_V(iph) != 4) {
-        ESP_LOGW(TAG, "Not IPv4");
+        log_msg(LOG_WARNING, "Not IPv4");
         return;
     }
 
     uint16_t ip_hlen = IPH_HL_BYTES(iph);
     if (ip_hlen < sizeof(struct ip_hdr) || ip_hlen > len) {
-        ESP_LOGW(TAG, "Bad IP header length");
+        log_msg(LOG_WARNING, "Bad IP header length");
         return;
     }
 
@@ -179,7 +147,7 @@ static void spi_ipv4_forward(const uint8_t *buf, size_t len)
 
     struct pbuf *q = pbuf_alloc(PBUF_TRANSPORT, l4_len, PBUF_RAM);
     if (!q) {
-        ESP_LOGW(TAG, "pbuf_alloc failed");
+        log_msg(LOG_WARNING, "pbuf_alloc failed");
         return;
     }
 
@@ -191,7 +159,7 @@ static void spi_ipv4_forward(const uint8_t *buf, size_t len)
 
     err_t err = ip4_output_if(q, &src, &dst, IPH_TTL(iph), IPH_TOS(iph), IPH_PROTO(iph), netif_default);
     if (err != ERR_OK) {
-        ESP_LOGW(TAG, "ip4_output_if failed: %d", err);
+        log_msg(LOG_WARNING, "ip4_output_if failed: %d", err);
     }
 
     pbuf_free(q);
@@ -227,7 +195,7 @@ static void spi_slave_init(void)
     recv_rx_buf = spi_bus_dma_memory_alloc(SPI_HOST, PKT_LEN*2, 0);
     assert(send_tx_buf && send_rx_buf && recv_tx_buf && recv_rx_buf);
 
-    ESP_LOGI(TAG, "SPI slave initialized");
+    log_msg(LOG_INFO, "SPI slave initialized");
 }
 /***********************************************************************************************/
 /**
@@ -238,7 +206,7 @@ static void spi_slave_init(void)
 esp_err_t spi_slave_send_packet(const uint8_t *data)
 {
     if (!data || !send_tx_buf || !send_rx_buf) {
-        ESP_LOGI(TAG, "Send NULL ptr.)", PKT_LEN);
+        log_msg(LOG_INFO, "Send NULL ptr.)", PKT_LEN);
         return ESP_FAIL;
     }
 
@@ -252,7 +220,7 @@ esp_err_t spi_slave_send_packet(const uint8_t *data)
 
     esp_err_t ret = spi_slave_transmit(SPI_HOST, &t, pdMS_TO_TICKS(1000));
     if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "SPI send failed: %d", ret);
+        log_msg(LOG_WARNING, "SPI send failed: %d", ret);
         return ret;
     }
 
@@ -268,7 +236,7 @@ esp_err_t spi_slave_send_packet(const uint8_t *data)
 esp_err_t spi_slave_recv_packet(uint8_t *rx_packet, TickType_t timeout_ms)
 {
     if (!rx_packet || !recv_tx_buf || !recv_rx_buf) {
-        ESP_LOGI(TAG, "Recv NULL ptr.)", PKT_LEN);
+        log_msg(LOG_INFO, "Recv NULL ptr.)", PKT_LEN);
         return ESP_FAIL;
     }
 
@@ -282,7 +250,7 @@ esp_err_t spi_slave_recv_packet(uint8_t *rx_packet, TickType_t timeout_ms)
 
     esp_err_t ret = spi_slave_transmit(SPI_HOST, &t, timeout_ms);
     if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "SPI recv failed: %d", ret);
+        log_msg(LOG_WARNING, "SPI recv failed: %d", ret);
         return ret;
     }
 
@@ -358,7 +326,7 @@ void log_l3_tcp(struct pbuf *p)
     uint32_t src = ip4_addr_get_u32(&iph->src);
     uint32_t dst = ip4_addr_get_u32(&iph->dest);
 
-    ESP_LOGI(TAG, "IP proto=%d %d.%d.%d.%d -> %d.%d.%d.%d len=%d",
+    log_msg(LOG_INFO, "IP proto=%d %d.%d.%d.%d -> %d.%d.%d.%d len=%d",
         IPH_PROTO(iph),
         src & 0xff, (src>>8)&0xff, (src>>16)&0xff, (src>>24)&0xff,
         dst & 0xff, (dst>>8)&0xff, (dst>>16)&0xff, (dst>>24)&0xff,
@@ -372,7 +340,7 @@ void log_l3_tcp(struct pbuf *p)
         struct tcp_hdr *tcph = (struct tcp_hdr *)((uint8_t *)iph + ip_hlen);
         uint8_t f = TCPH_FLAGS(tcph);
 
-        ESP_LOGI(TAG, " TCP %s%s%s%s %u -> %u seq=%u ack=%u",
+        log_msg(LOG_INFO, " TCP %s%s%s%s %u -> %u seq=%u ack=%u",
             (f & TCP_SYN) ? "SYN " : "",
             (f & TCP_ACK) ? "ACK " : "",
             (f & TCP_FIN) ? "FIN " : "",
@@ -431,7 +399,7 @@ static void virtual_netif_init(void)
 
     netif_add(&vnetif, &ip, &netmask, &gw, NULL, virtual_netif_netif_init, tcpip_input);
     vnetif.flags |= NETIF_FLAG_UP | NETIF_FLAG_LINK_UP;
-    ESP_LOGI(TAG, "Virtual netif UP: 10.0.0.1/24");
+    log_msg(LOG_INFO, "Virtual netif UP: 10.0.0.1/24");
 }
 /***********************************************************************************************/
 /**
@@ -440,14 +408,14 @@ static void virtual_netif_init(void)
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        ESP_LOGI(TAG, "WiFi started, connecting...");
+        log_msg(LOG_INFO, "WiFi started, connecting...");
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGW(TAG, "WiFi disconnected, retry...");
+        log_msg(LOG_WARNING, "WiFi disconnected, retry...");
         esp_wifi_connect();
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-        ESP_LOGI(TAG, "WiFi GOT IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        log_msg(LOG_INFO, "WiFi GOT IP: " IPSTR, IP2STR(&event->ip_info.ip));
         xEventGroupSetBits(wifi_event_group, WIFI_GOT_IP_BIT);
     }
 }
@@ -492,7 +460,7 @@ static void spi_rx_task(void *arg)
 
     while (1) {
         if (spi_recv_ip(buf, &length, pdMS_TO_TICKS(1000)) == ESP_OK && length != 0) {
-            ESP_LOGI(TAG, "\nReceived valid SPI packet (%d bytes):", length);
+            log_msg(LOG_INFO, "\nReceived valid SPI packet (%d bytes):", length);
             spi_ipv4_forward(buf, length);
         }
 
@@ -527,16 +495,16 @@ void app_main(void)
     spi_slave_init();
     wifi_init();
 
-    ESP_LOGI(TAG, "Waiting for IP...");
+    log_msg(LOG_INFO, "Waiting for IP...");
     xEventGroupWaitBits(wifi_event_group, WIFI_GOT_IP_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
 
     virtual_netif_init();
 
-    ESP_LOGI(TAG, "lwIP router + virtual sink ready");
+    log_msg(LOG_INFO, "lwIP router + virtual sink ready");
 
     if (netif_default) {
         const ip4_addr_t *ip = netif_ip4_addr(netif_default);
-        ESP_LOGI(TAG, "default netif: %c%c%d ip=%s",
+        log_msg(LOG_INFO, "default netif: %c%c%d ip=%s",
                  netif_default->name[0], netif_default->name[1], netif_default->num,
                  ip ? ip4addr_ntoa(ip) : "none");
     }

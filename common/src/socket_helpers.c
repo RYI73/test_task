@@ -39,9 +39,9 @@
 
 #include "logs.h"
 #include "types.h"
-#include "defines.h"
 #include "error_code.h"
 #include "socket_helpers.h"
+#include "defaults.h"
 
 /***********************************************************************************************/
 /* Internal functions                                                                          */

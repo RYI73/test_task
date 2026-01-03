@@ -40,9 +40,9 @@
 
 #include "logs.h"
 #include "types.h"
-#include "defines.h"
 #include "error_code.h"
 #include "spi_helpers.h"
+#include "defaults.h"
 
 /** SPI buffer definitions */
 static uint8_t spi_recv_tx_buff[PKT_LEN + 1];

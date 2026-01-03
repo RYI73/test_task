@@ -1,10 +1,6 @@
 #pragma once
 
 /***********************************************************************************************/
-/***********************************************************************************************/
-#define PROC_PATH                               "/proc"
-#define DEV_NULL_PATH                           "/dev/null"
-/***********************************************************************************************/
 #define MAX_DUMP_BUFFER_SIZE                    (128)
 /***********************************************************************************************/
 #define SOCKET_READ_TIMEOUT_MS                  (2000)
@@ -43,16 +39,27 @@
 /** poll() timeout in milliseconds */
 #define CONNECT_TIMEOUT_MS                      (500)
 #define POLL_TIMEOUT_MS                         (500)
+
+/** SPI protocol config */
+#define SPI_MAGIC                               (0x49504657)      /**< Magic constant ('IPFW') for SPI framing */
+#define SPI_PROTO_VERSION                       (1)
+
+/** WiFi SSID config */
+//#define WIFI_SSID                               "YOUR_WIFI_SSID"
+//#define WIFI_PASS                               "YOUR_PASSWORD"
+#define WIFI_SSID                               "D-Link"
+#define WIFI_PASS                               "12345678"
+
+/***********************************************************************************************/
+/*  Raspberry Pi defines                                                                              */
 /***********************************************************************************************/
 /** SPI device settings */
 #define SPI_DEVICE                              "/dev/spidev0.0"
-#define SPI_MODE                                0
-#define SPI_BITS                                8
-#define SPI_SPEED                               1000000         /**< SPI speed in Hz */
-#define MAX_PKT_SIZE                            1500            /**< Maximum packet size for SPI transfer */
-#define SPI_MAGIC                               0x49504657      /**< Magic constant ('IPFW') for SPI framing */
-#define SPI_PROTO_VERSION                       1
-#define PKT_LEN                                 256
+#define SPI_MODE                                (0)
+#define SPI_BITS                                (8)
+#define SPI_SPEED                               (1000000)         /**< SPI speed in Hz */
+#define MAX_PKT_SIZE                            (1500)            /**< Maximum packet size for SPI transfer */
+#define PKT_LEN                                 (256)
 
 /** TUN device settings */
 #define TUN_DEVICE                              "/dev/net/tun"
@@ -63,6 +70,28 @@
 #define GPIO_EXPORT                             "/sys/class/gpio/export"
 #define GPIO_BASE                               "/sys/class/gpio/%s/base"
 #define GPIO_CLASS                              "/sys/class/gpio"
-#define GPIO_HANDSHAKE_SPI                      25              /**< GPIO25 used as SPI handshake line */
+#define GPIO_HANDSHAKE_SPI                      (25)              /**< GPIO25 used as SPI handshake line */
+
+#define PROC_PATH                               "/proc"
+#define DEV_NULL_PATH                           "/dev/null"
+
+/***********************************************************************************************/
+/*  ESP32 defines                                                                              */
+/***********************************************************************************************/
+/** SPI device settings */
+#define SPI_HOST                                SPI2_HOST
+#define PKT_LEN                                 (256)
+#define WIFI_GOT_IP_BIT                         BIT0
+
+/* SPI GPIOs */
+#define GPIO_SPI_READY                          GPIO_NUM_16
+#define GPIO_MOSI                               (13)
+#define GPIO_MISO                               (12)
+#define GPIO_SCLK                               (14)
+#define GPIO_CS                                 (15)
+
+#define SPI_TX_QUEUE_LEN                        (8)
+
+
 /***********************************************************************************************/
 

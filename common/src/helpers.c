@@ -23,7 +23,6 @@
 #include <ctype.h>
 
 #include "helpers.h"
-#include "defines.h"
 #include "defaults.h"
 #include "error_code.h"
 #include "protocol.h"

@@ -19,17 +19,21 @@ Check the version:
 idf.py --version
 ```
 
-Build 'esp32_spi_router' project:
-```
-cd esp32_spi_router
-idf.py build
-cd ..
-```
-
 Build Raspberry Pi utilities 'proxy' 'client' and 'server':
 ```
 ./compile --arm
 ./compile --x86
 ```
+
+Build 'esp32_spi_router' project:
+```
+./compile --esp
+```
+
+Flash 'esp32_spi_router' project:
+```
+./compile --flash-esp
+```
+
 
 

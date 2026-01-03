@@ -2,6 +2,8 @@
 
 BUILD_DIR_X86=build_x86
 BUILD_DIR_ARM=build_arm
+BUILD_DIR_ESP=esp32-lwip-forward-trace
+TOOLCHAIN_DIR_ESP=esp-idf
 
 case $1 in
   --arm)
@@ -21,6 +23,24 @@ case $1 in
         
         cd ./$BUILD_DIR_X86
         make
+        result=$?
+    ;;
+
+  --esp) 
+        cd $TOOLCHAIN_DIR_ESP
+        . ./export.sh
+        cd -
+        cd $BUILD_DIR_ESP
+        idf.py build
+        result=$?
+    ;;
+
+  --flash-esp) 
+        cd $TOOLCHAIN_DIR_ESP
+        . ./export.sh
+        cd -
+        cd $BUILD_DIR_ESP
+        idf.py flash
         result=$?
     ;;
 
@@ -44,11 +64,23 @@ case $1 in
         result=0
     ;;
 
+  --clean-esp)
+        cd $TOOLCHAIN_DIR_ESP
+        . ./export.sh
+        cd -
+        cd $BUILD_DIR_ESP
+        idf.py clean
+        result=0
+    ;;
+
   *)
         echo "--x86 - compile release for x86 platform."
         echo "--arm - cross-compile release for ARM platform."
+        echo "--esp - cross-compile release for ESP32 platform."
+        echo "--flash-esp - flash image to ESP32 chip."
         echo "--clean-arm - cleans all the ARM build files in the project"
         echo "--clean-x86 - cleans all the x86 build files in the project"
+        echo "--clean-esp - cleans all the ESP32 build files in the project"
     ;;
 esac
 
