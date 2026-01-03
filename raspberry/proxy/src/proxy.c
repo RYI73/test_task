@@ -32,6 +32,7 @@
 #include <dirent.h>
 
 #include "defaults.h"
+#include "helpers.h"
 
 /** SPI buffer definitions */
 static uint8_t spi_recv_tx_buff[PKT_LEN + 1];
@@ -53,44 +54,6 @@ typedef struct __attribute__((packed)) {
     uint8_t flags;      /**< Reserved flags */
     uint16_t length;    /**< Length of IPv4 packet in bytes */
 } spi_ip_hdr_t;
-/***********************************************************************************************/
-/**
- * @brief Compute CRC32 for data integrity check
- *
- * @param crc Initial CRC value
- * @param buf Pointer to data buffer
- * @param len Length of buffer in bytes
- * @return Computed CRC32 value
- */
-uint32_t crc32(uint32_t crc, const uint8_t *buf, size_t len) {
-    uint32_t c = crc ^ 0xFFFFFFFF;
-    for (size_t i = 0; i < len; i++) {
-        c ^= buf[i];
-        for (int k = 0; k < 8; k++)
-            c = (c & 1) ? (0xEDB88320 ^ (c >> 1)) : (c >> 1);
-    }
-    return c ^ 0xFFFFFFFF;
-}
-/***********************************************************************************************/
-/**
- * @brief Get current monotonic time in nanoseconds
- * @return Time in nanoseconds
- */
-static inline uint64_t now_ns(void)
-{
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
-}
-/***********************************************************************************************/
-/**
- * @brief Get current monotonic time in milliseconds
- * @return Time in milliseconds
- */
-static inline uint32_t now_ms(void)
-{
-    return (uint32_t)(now_ns() / 1000000);
-}
 /***********************************************************************************************/
 /**
  * @brief Allocate a TUN interface
@@ -429,7 +392,7 @@ int spi_send_packet(int spi_fd, uint8_t *data, uint16_t len)
     if (spi_send_transfer(spi_fd, buf, sizeof(buf)) < 0) {
         return -1;
     }
-    
+
     return 0;
 }
 /***********************************************************************************************/

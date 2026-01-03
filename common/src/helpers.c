@@ -220,6 +220,17 @@ u16 crc16(const u8 * __restrict data, u32 length)
     return crc;
 }
 /***********************************************************************************************/
+uint32_t crc32(uint32_t crc, const uint8_t *buf, size_t len)
+{
+    uint32_t c = crc ^ 0xFFFFFFFF;
+    for (size_t i = 0; i < len; i++) {
+        c ^= buf[i];
+        for (int k = 0; k < 8; k++)
+            c = (c & 1) ? (0xEDB88320 ^ (c >> 1)) : (c >> 1);
+    }
+    return c ^ 0xFFFFFFFF;
+}
+/***********************************************************************************************/
 int hexstr_to_bytes(const char *str, uint8_t *out, size_t max_out, size_t *count)
 {
     int result = RESULT_OK;

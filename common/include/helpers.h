@@ -81,6 +81,16 @@ void set_raw_mode(int enable);
 u16 crc16(const u8 *data, u32 length);
 
 /**
+ * @brief Compute CRC32 for data integrity check
+ *
+ * @param crc Initial CRC value
+ * @param buf Pointer to data buffer
+ * @param len Length of buffer in bytes
+ * @return Computed CRC32 value
+ */
+uint32_t crc32(uint32_t crc, const uint8_t *buf, size_t len);
+
+/**
  * @brief Converts all characters in a string to uppercase.
  *
  * This function iterates through each character in the given null-terminated
