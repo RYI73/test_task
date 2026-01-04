@@ -28,127 +28,227 @@
 #include "logs.h"
 #include "socket_helpers.h"
 #include "helpers.h"
-#include "protocol.h"
 
 static u16 sequence = 0x20;
 
-/**
- * @brief Global flag controlling main loop execution.
- *
- * Set to 0 by SIGINT handler to allow graceful shutdown.
- */
-static volatile sig_atomic_t running = 1;
-
-/**
- * @brief SIGINT signal handler.
- *
- * This handler only sets a flag so that the main loop
- * can terminate cleanly.
- *
- * @param sig Signal number (unused).
- */
-static void sigint_handler(int sig)
-{
-    (void)sig;
-    running = 0;
-}
-
+/***********************************************************************************************/
+/* Internal functions                                                                          */
+/***********************************************************************************************/
 /**
  * @brief Find a free slot in pollfd array for a new client.
  *
- * Index 0 is reserved for the listening socket.
+ * This function searches the `pfds` array for a free slot (fd < 0) starting from index 1,
+ * as index 0 is reserved for the listening socket.
  *
- * @param pfds Array of pollfd structures.
- * @return Index of a free slot, or -1 if none available.
+ * @param pfds  Pointer to an array of pollfd structures.
+ * @param slot  Output parameter, set to the index of the first free slot if found, or -1 if none.
+ *
+ * @return RESULT_OK if a free slot was found,
+ *         RESULT_DATA_NOT_FOUND if no free slot is available.
  */
-static int find_free_slot(struct pollfd *pfds)
+static int find_free_slot(struct pollfd *pfds, int *slot)
 {
-    for (int i = 1; i <= MAX_CLIENTS; i++) {
-        if (pfds[i].fd < 0)
-            return i;
-    }
-    return -1;
-}
+    int i = 0;
+    *slot = -1;
+    int result = RESULT_DATA_NOT_FOUND;
 
+    for (i = 1; i <= MAX_CLIENTS; i++) {
+        if (pfds[i].fd < 0) {
+            *slot = i;
+            result = RESULT_OK;
+            break;
+        }
+    }
+
+    return result;
+}
+/***********************************************************************************************/
 /**
- * @brief Program entry point.
+ * @brief Accept a new client connection and assign to pollfd array.
  *
- * Initializes syslog, installs signal handlers, creates and binds
- * the listening socket, and enters the main poll-based event loop.
- *
- * @return Exit status code.
+ * @param listen_fd Listening socket
+ * @param pfds Pollfd array
  */
-int main(void)
+static void accept_new_client(int listen_fd, struct pollfd *pfds)
 {
-    int listen_fd = -1;
-    struct pollfd pfds[MAX_CLIENTS + 1];
+    int slot = -1;
+    int result = RESULT_OK;
+
+    do {
+        int client_fd = accept(listen_fd, NULL, NULL);
+        if (client_fd < 0) {
+            log_msg(LOG_ERR, "Server accept failed: %s", strerror(errno));
+            break;
+        }
+
+        result = find_free_slot(pfds, &slot);
+        if (!isOk(result)) {
+            log_msg(LOG_WARNING, "Maximum clients reached");
+            socket_close(client_fd);
+            break;
+        }
+
+        pfds[slot].fd = client_fd;
+        pfds[slot].events = POLLIN;
+    } while(0);
+}
+/***********************************************************************************************/
+/**
+ * @brief Handle a single client socket: read, validate, prepare reply, and send.
+ *
+ * @param client_fd Client socket file descriptor
+ */
+static void handle_client(int client_fd)
+{
     int result = RESULT_OK;
     int res_pack = RESULT_OK;
     size_t len = 0;
     packet_t request = {0};
-    packet_t replay = {0};
+    packet_t reply   = {0};
+
+    do {
+        memset(request.buffer, 0, sizeof(request.buffer));
+        memset(reply.buffer, 0, sizeof(reply.buffer));
+
+        ssize_t received = sizeof(request.buffer);
+        result = socket_read_data(client_fd, request.buffer, &received, SOCKET_READ_TIMEOUT_MS);
+        if (!isOk(result) || received == 0) {
+            log_msg(LOG_ERR, "Server recv failed");
+            result = RESULT_SOCKET_ERROR;
+            break;
+        }
+
+        res_pack = protocol_packet_validate(&request);
+        if (isOk(res_pack)) {
+            switch (request.packet.header.type) {
+                case PACKET_TYPE_STRING: {
+                    log_msg(LOG_DEBUG, "Received STRING: '%.32s%s'", request.packet.data,
+                            strlen(request.packet.data) > 32 ? "..." : "");
+                    len = strlen(request.packet.data);
+                    if (len < strlen(CLIENT_MESSAGE) || memcmp(request.packet.data, CLIENT_MESSAGE, len) != 0) {
+                        res_pack = RESULT_BROKEN_MSG_ERROR;
+                    }
+                    break;
+                }
+
+                case PACKET_TYPE_ARRAY: {
+                    char str[32];
+                    const u8 array_good_bin[] = CLIENT_ARRAY;
+                    bytes_to_hexstr(request.packet.data, request.packet.header.len, str, sizeof(str));
+                    log_msg(LOG_DEBUG, "Received ARRAY: %.32s", str);
+                    if (memcmp(request.packet.data, array_good_bin, sizeof(array_good_bin)) != 0) {
+                        res_pack = RESULT_BROKEN_MSG_ERROR;
+                    }
+                    break;
+                }
+
+                default: {
+                    res_pack = RESULT_TYPE_UNKNOWN_ERROR;
+                    log_msg(LOG_DEBUG, "Unknown packet type: %u", request.packet.header.type);
+                    break;
+                }
+            }
+        } else {
+            log_msg(LOG_WARNING, "Received broken packet");
+        }
+
+        /* Prepare and send reply */
+        reply.packet.header.type = PACKET_TYPE_ANSWER;
+        reply.packet.header.answer_sequence = request.packet.header.sequence;
+        reply.packet.header.answer_result = res_pack;
+        protocol_packet_prepare(&reply, sequence++, 0);
+
+        result = socket_send_data(client_fd, reply.buffer, PACKET_HEADER_SIZE);
+        if (!isOk(result)) {
+            log_msg(LOG_ERR, "Server send failed");
+            result = RESULT_SOCKET_ERROR;
+        }
+
+    } while(0);
+
+    /* Close client socket in any case */
+    socket_close(client_fd);
+}
+/***********************************************************************************************/
+/**
+ * @brief Close all client sockets
+ *
+ * @param pfds Pollfd array
+ */
+static void close_all_clients(struct pollfd *pfds)
+{
+    for (int i = 1; i <= MAX_CLIENTS; i++) {
+        if (pfds[i].fd >= 0) {
+            socket_close(pfds[i].fd);
+            pfds[i].fd = -1;
+        }
+    }
+}
+
+/***********************************************************************************************/
+/* Main application function                                                                   */
+/***********************************************************************************************/
+int main(void)
+{
+    volatile bool is_running = true;
+    int listen_fd = -1;
+    struct pollfd pfds[MAX_CLIENTS + 1];
+    int result = RESULT_OK;
+
+    /* SIGNAL handler */
+    void sighandler(int sig)
+    {
+        UNUSED(sig);
+        is_running = false;
+    }
+    signal(SIGINT, sighandler);
+    signal(SIGTERM, sighandler);
 
     do {
         /* Initialize syslog */
         openlog("poll_server", LOG_PID | LOG_CONS, LOG_DAEMON);
 
-        /* Install SIGINT handler */
-        struct sigaction sa = { .sa_handler = sigint_handler };
-        sigemptyset(&sa.sa_mask);
-        sigaction(SIGINT, &sa, NULL);
-
+        /* Create TCP server */
         result = socket_tcp_server_create(&listen_fd, ANY_ADDR, SERVER_PORT, MAX_CLIENTS);
         if (!isOk(result)) {
+            log_msg(LOG_ERR, "Failed to create server socket: %u", result);
             break;
         }
-        log_msg(LOG_INFO, "Opened socket fd %d", listen_fd);
+
+        log_msg(LOG_INFO, "Server listening on fd %d port %d", listen_fd, SERVER_PORT);
 
         /* Initialize pollfd array */
-        pfds[0].fd     = listen_fd;
+        pfds[0].fd = listen_fd;
         pfds[0].events = POLLIN;
 
-        for (int i = 1; i <= MAX_CLIENTS; i++)
+        for (int i = 1; i <= MAX_CLIENTS; i++) {
             pfds[i].fd = -1;
+        }
 
-        log_msg(LOG_INFO, "Server started on port %d", SERVER_PORT);
-
-        /* Main event loop */
-        while (running) {
+        /* Main poll loop */
+        while (is_running) {
             int ret = poll(pfds, MAX_CLIENTS + 1, POLL_TIMEOUT_MS);
 
-            if (ret == 0) {
-                /* Timeout occurred, loop again */
+            if (ret < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                log_msg(LOG_ERR, "Poll error: %s", strerror(errno));
+                break;
+            } else if (ret == 0) {
                 continue;
             }
 
-            if (ret < 0) {
-                if (errno == EINTR)
-                    continue;
-                log_msg(LOG_ERR, "❌ Server poll failed: %s", strerror(errno));
-                break;
-            }
-
-            /* Handle new incoming connections */
+            /* Accept new connections */
             if (pfds[0].revents & POLLIN) {
-                int client_fd = accept(listen_fd, NULL, NULL);
-                if (client_fd < 0) {
-                    log_msg(LOG_ERR, "❌ Server accept failed: %s", strerror(errno));
-                } else {
-                    int slot = find_free_slot(pfds);
-                    if (slot < 0) {
-                        log_msg(LOG_WARNING, "Maximum clients reached");
-                        socket_close(client_fd);
-                    } else {
-                        pfds[slot].fd     = client_fd;
-                        pfds[slot].events = POLLIN;
-                    }
-                }
+                accept_new_client(listen_fd, pfds);
             }
 
-            /* Handle client sockets */
+            /* Handle clients */
             for (int i = 1; i <= MAX_CLIENTS; i++) {
-                if (pfds[i].fd < 0)
+                if (pfds[i].fd < 0) {
                     continue;
+                }
 
                 if (pfds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) {
                     socket_close(pfds[i].fd);
@@ -157,80 +257,17 @@ int main(void)
                 }
 
                 if (pfds[i].revents & POLLIN) {
-                    memset(request.buffer, 0, sizeof(request.buffer));
-                    memset(replay.buffer, 0, sizeof(request.buffer));
-
-                    ssize_t received = sizeof(request.buffer);
-                    result = socket_read_data(pfds[i].fd, request.buffer, &received, SOCKET_READ_TIMEOUT_MS);
-                    if (!isOk(result) || received == 0) {
-                        log_msg(LOG_ERR, "❌ Server recv failed");
-                        socket_close(pfds[i].fd);
-                        pfds[i].fd = -1;
-                        continue;
-                    }
-
-                    char str[32];
-                    const char array_good_bin[] = CLIENT_ARRAY;
-                    res_pack = RESULT_OK;
-                    /* Validate reply */
-                    res_pack = protocol_packet_validate(&request);
-                    if (isOk(res_pack)) {
-                        switch (request.packet.header.type) {
-                        case PACKET_TYPE_STRING:
-                            log_msg(LOG_DEBUG, "Server received: '%.32s%s'", request.packet.data, strlen(request.packet.data) > 32 ? "..." : "");
-                            len = strlen(request.packet.data);
-                            if (strlen(request.packet.data) < strlen(CLIENT_MESSAGE) || memcmp(request.packet.data, CLIENT_MESSAGE, len) != 0) {
-                                res_pack = RESULT_BROKEN_MSG_ERROR;
-                            }
-                            break;
-                        case PACKET_TYPE_ARRAY:
-                            bytes_to_hexstr(request.packet.data, request.packet.header.len, str, sizeof(str));
-                            log_msg(LOG_DEBUG, "Server received: %.32s", str);
-                            if (memcmp(request.packet.data, array_good_bin, sizeof(array_good_bin)) != 0) {
-                                res_pack = RESULT_BROKEN_MSG_ERROR;
-                            }
-                            break;
-                        default:
-                            res_pack = RESULT_TYPE_UNKNOWN_ERROR;
-                            log_msg(LOG_DEBUG, "Server received unknown type of packed: %u", request.packet.header.type);
-                            break;
-                        }
-
-                    }
-                    else {
-                        log_msg(LOG_WARNING, "Server received broken packet");
-                    }
-
-                    /* Prepare packet to server */
-                    replay.packet.header.type = PACKET_TYPE_ANSWER;
-                    replay.packet.header.answer_sequence = request.packet.header.sequence;
-                    replay.packet.header.answer_result = res_pack;
-                    protocol_packet_prepare(&replay, sequence++, 0);
-
-                    /* Send message to server */
-                    result = socket_send_data(pfds[i].fd, (void*)replay.buffer, PACKET_HEADER_SIZE);
-                    if (!isOk(result)) {
-                        log_msg(LOG_ERR, "❌ Server send failed");
-                    }
-
-                    socket_close(pfds[i].fd);
+                    handle_client(pfds[i].fd);
                     pfds[i].fd = -1;
                 }
             }
         }
 
-    } while(0);
+    } while (0);
 
+    close_all_clients(pfds);
 
-    for (int i = 1; i <= MAX_CLIENTS; i++) {
-        if (pfds[i].fd >= 0) {
-            socket_close(pfds[i].fd);
-        }
-    }
-
-    if (listen_fd >= 0) {
-        socket_close(listen_fd);
-    }
+    socket_close(listen_fd);
 
     log_msg(LOG_INFO, "Server stopped");
 
@@ -238,8 +275,9 @@ int main(void)
 
     if (isOk(result)) {
         return EXIT_SUCCESS;
-    }
-    else {
+    } else {
+        fprintf(stderr, "Server exited with error: %u\n", result);
         return EXIT_FAILURE;
     }
 }
+/***********************************************************************************************/
