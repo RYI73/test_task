@@ -159,8 +159,7 @@ int main(void)
                 if (pfds[i].revents & POLLIN) {
                     memset(request.buffer, 0, sizeof(request.buffer));
                     memset(replay.buffer, 0, sizeof(request.buffer));
-//                    ssize_t n = recv(pfds[i].fd, request.buffer, sizeof(request.buffer), 0);
-                    /* Receive reply */
+
                     ssize_t received = sizeof(request.buffer);
                     result = socket_read_data(pfds[i].fd, request.buffer, &received, SOCKET_READ_TIMEOUT_MS);
                     if (!isOk(result) || received == 0) {

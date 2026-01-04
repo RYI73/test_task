@@ -54,9 +54,7 @@ int protocol_packet_validate(packet_t *packet)
         }
 
         if (seq <= last_sequence) {
-            log_msg(LOG_ERR, "❌ Error: duplicate packet sequence %u", seq);
-            result = RESULT_SEQUENCE_ERROR;
-            break;
+            log_msg(LOG_WARNING, "⚠️ It's look like duplicate packet sequence %u (last_sequence %u)", seq, last_sequence);
         }
 
         u16 skipped = 0;
