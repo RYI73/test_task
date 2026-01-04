@@ -3,6 +3,8 @@ idf_component_register(
         "main.c" 
         "../../common/src/esp32/logs.c"
         "../../common/src/esp32/spi_helpers.c"
+        "../../common/src/esp32/gpio_helpers.c"
+        "../../common/src/esp32/network_helpers.c"
     INCLUDE_DIRS 
         "../../common/include"
 )

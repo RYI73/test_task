@@ -27,9 +27,6 @@
 #include "esp_wifi.h"
 #include "esp_crc.h"
 
-#include "driver/spi_slave.h"
-#include "driver/gpio.h"
-
 #include "lwip/netif.h"
 #include "lwip/ip4.h"
 #include "lwip/pbuf.h"
@@ -42,6 +39,8 @@
 #include "defaults.h"
 #include "error_code.h"
 #include "spi_helpers.h"
+#include "network_helpers.h"
+#include "gpio_helpers.h"
 
 /* ===================== GLOBALS ===================== */
 static EventGroupHandle_t wifi_event_group;
@@ -63,24 +62,24 @@ typedef struct {
 /**
  * @brief Initialize SPI handshake GPIO and enable pull-ups on SPI lines
  */
-static void gpio_ready_init(void)
-{
-    gpio_config_t io = {
-        .pin_bit_mask = BIT64(GPIO_SPI_READY),
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
+//static void gpio_ready_init(void)
+//{
+//    gpio_config_t io = {
+//        .pin_bit_mask = BIT64(GPIO_SPI_READY),
+//        .mode = GPIO_MODE_OUTPUT,
+//        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+//        .pull_up_en = GPIO_PULLUP_DISABLE,
+//        .intr_type = GPIO_INTR_DISABLE,
+//    };
 
-    gpio_config(&io);
-    gpio_set_level(GPIO_SPI_READY, 0);
+//    gpio_config(&io);
+//    gpio_set_level(GPIO_SPI_READY, 0);
 
-    /* Enable pull-ups on SPI lines to prevent spurious pulses */
-    gpio_set_pull_mode(GPIO_MOSI, GPIO_PULLUP_ONLY);
-    gpio_set_pull_mode(GPIO_SCLK, GPIO_PULLUP_ONLY);
-    gpio_set_pull_mode(GPIO_CS, GPIO_PULLUP_ONLY);
-}
+//    /* Enable pull-ups on SPI lines to prevent spurious pulses */
+//    gpio_set_pull_mode(GPIO_MOSI, GPIO_PULLUP_ONLY);
+//    gpio_set_pull_mode(GPIO_SCLK, GPIO_PULLUP_ONLY);
+//    gpio_set_pull_mode(GPIO_CS, GPIO_PULLUP_ONLY);
+//}
 /***********************************************************************************************/
 /**
  * @brief Forward an IPv4 packet from SPI to lwIP stack
@@ -312,13 +311,22 @@ void app_main(void)
         }
         ESP_ERROR_CHECK(ret);
 
-        gpio_ready_init();
+        result = gpio_init(NULL, 0, NULL);
+        if (!isOk(result)) {
+            log_msg(LOG_ERR, "GPIO initialization error: %u", result);
+            break;
+        }
+        log_msg(LOG_INFO, "GPIO initialized for SPI handshake");
 
         ESP_ERROR_CHECK(esp_netif_init());
         ESP_ERROR_CHECK(esp_event_loop_create_default());
 
         spi_tx_queue = xQueueCreate(SPI_TX_QUEUE_LEN, sizeof(queue_pkt_t));
-        assert(spi_tx_queue != NULL);
+        if (spi_tx_queue == NULL) {
+            log_msg(LOG_ERR, "Unable to create queue 'spi_tx_queue'");
+            result = RESULT_INTERNAL_ERROR;
+            break;
+        }
 
         result = spi_init(NULL, &spi_fd);
         if (!isOk(result)) {

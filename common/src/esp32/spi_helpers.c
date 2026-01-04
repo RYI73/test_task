@@ -211,6 +211,15 @@ int spi_init(const char *device, int *spi_fd)
             break;
         }
 
+        /* Enable pull-ups on SPI lines to prevent spurious pulses */
+        if (gpio_set_pull_mode(GPIO_MOSI, GPIO_PULLUP_ONLY) != ESP_OK ||
+            gpio_set_pull_mode(GPIO_SCLK, GPIO_PULLUP_ONLY) != ESP_OK ||
+            gpio_set_pull_mode(GPIO_CS,   GPIO_PULLUP_ONLY) != ESP_OK) {
+            log_msg(LOG_ERR, "Failed to set pull-ups on SPI lines");
+            result = RESULT_INTERNAL_ERROR;
+            break;
+        }
+
         *spi_fd = 1; // dummy fd for compatibility
         log_msg(LOG_INFO, "SPI initialized with DMA buffers and semaphore");
     } while(0);
