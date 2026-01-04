@@ -52,10 +52,8 @@
 #define SPI_PROTO_VERSION                       (1)
 
 /** WiFi SSID config */
-//#define WIFI_SSID                               "YOUR_WIFI_SSID"
-//#define WIFI_PASS                               "YOUR_PASSWORD"
-#define WIFI_SSID                               "D-Link"
-#define WIFI_PASS                               "12345678"
+#define WIFI_SSID                               "YOUR_WIFI_SSID"
+#define WIFI_PASS                               "YOUR_PASSWORD"
 
 /** Maximum size of packet */
 #define DEFAULT_MTU                             (1500)
