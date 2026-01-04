@@ -9,30 +9,46 @@
 
 #include "types.h"
 
-/***********************************************************************************************/
 /**
- * @brief Prints a hexadecimal and ASCII dump of a memory buffer.
+ * @brief Thread-safe printf wrapper.
  *
- * This function takes a pointer to a buffer and its size, and prints a formatted
- * hex dump to standard output. Each line contains 16 bytes in hexadecimal format,
- * followed by the corresponding printable ASCII characters (non-printable characters
- * are replaced with a dot `.`).
+ * This function prints a formatted string to standard output (stdout)
+ * in a thread-safe manner, using a mutex or similar lock mechanism.
  *
- * The output format looks like:
- * ```
- * 000000h: 48 65 6C 6C 6F 20 77 6F 72 6C 64 21 0A         | Hello world!.
- * ```
+ * @param[in] message Format string (like in printf)
+ * @param[in] ...     Variadic arguments to be formatted according to the format string
  *
- * @param buff Pointer to the input buffer (`u8 *`), which contains the data to dump.
- * @param sz The number of bytes in the buffer to print.
+ * @note Uses LOCK/UNLOCK macros to ensure thread safety.
+ * @note Can be combined with GCC/Clang attribute:
+ *       __attribute__((format(printf, 1, 2))) to enable compile-time format checking.
  *
- * @note Printable characters are determined using `isalpha()` and `isdigit()`.
- *       Non-printable or control characters are displayed as `.`.
+ * @example
+ * print_string("Hello %s, number=%d\n", "world", 42);
+ */
+void print_string(const char* message, ...);
+
+/**
+ * @brief Print a hex + ASCII dump of a buffer. ONLY FOR DEBUG. NOT FOR RELEASE !!!
  *
- * @see printf(), isalpha(), isdigit()
+ * This function prints the contents of a buffer in a standard hex dump format,
+ * 16 bytes per line, along with the ASCII representation on the side. Non-printable
+ * characters are shown as dots ('.'). Optionally, a prefix string can be prepended
+ * to each dump line for easier identification in logs.
+ *
+ * The function is thread-safe if `LOCK`/`UNLOCK` macros properly protect output.
+ *
+ * @param buff  Pointer to the buffer to be dumped.
+ * @param sz    Size of the buffer in bytes.
+ * @param pref  Optional prefix string to print before each line. Can be NULL.
+ *
+ * @note If the buffer size exceeds `MAX_DUMP_BUFFER_SIZE`, the function
+ *       currently ignores truncation (commented out in code).
+ *
+ * @example
+ * u8 data[32] = {0x01, 0x02, 0x41, 0x42, 0x43, ...};
+ * print_dump(data, sizeof(data), "RX");
  */
 void print_dump(u8 *buff, u32 sz, char *pref);
-void print_string(const char* message, ...);
 
 /**
  * @brief Signal handler for SIGINT (Ctrl-C).
@@ -81,6 +97,16 @@ void set_raw_mode(int enable);
 u16 crc16(const u8 *data, u32 length);
 
 /**
+ * @brief Compute CRC32 for data integrity check
+ *
+ * @param crc Initial CRC value
+ * @param buf Pointer to data buffer
+ * @param len Length of buffer in bytes
+ * @return Computed CRC32 value
+ */
+uint32_t crc32(u32 crc, const uint8_t *buf, size_t len);
+
+/**
  * @brief Converts all characters in a string to uppercase.
  *
  * This function iterates through each character in the given null-terminated
@@ -122,9 +148,48 @@ char *strupr(char *str);
  */
 void posix_putch(void *data, char ch, bool is_last);
 
+/**
+ * @brief Converts a hexadecimal string to a byte array.
+ *
+ * Parses a string containing hexadecimal digits and stores the result
+ * as binary bytes in the provided output buffer.
+ *
+ * @param[in]  str      Input string containing hexadecimal characters
+ * @param[out] out      Output buffer to store the bytes
+ * @param[in]  max_out  Maximum number of bytes that can be written to out
+ * @param[out] count    Number of bytes actually written to out
+ *
+ * @return 0 on success, non-zero on error (e.g., invalid characters or overflow)
+ *
+ * @note The input string may contain uppercase or lowercase hex digits.
+ */
 int hexstr_to_bytes(const char *str, uint8_t *out, size_t max_out, size_t *count);
+
+/**
+ * @brief Converts a byte array to a hexadecimal string.
+ *
+ * Converts the given byte array into a null-terminated string containing
+ * hexadecimal digits.
+ *
+ * @param[in]  data      Input byte array
+ * @param[in]  len       Number of bytes in the input array
+ * @param[out] out       Output buffer to store the hex string
+ * @param[in]  out_size  Size of the output buffer (including null terminator)
+ *
+ * @return 0 on success, non-zero if the output buffer is too small
+ */
 int bytes_to_hexstr(const uint8_t *data, size_t len, char *out, size_t out_size);
 
+/**
+ * @brief Returns current time in nanoseconds.
+ *
+ * Gets the current time using a monotonic clock and returns it as
+ * the number of nanoseconds since an unspecified starting point.
+ *
+ * @return Current time in nanoseconds
+ *
+ * @note Uses CLOCK_MONOTONIC to avoid issues with system clock changes.
+ */
 static inline u64 now_ns(void)
 {
     struct timespec ts;
@@ -132,9 +197,27 @@ static inline u64 now_ns(void)
     return (u64)ts.tv_sec * 1000000000ull + (u64)ts.tv_nsec;
 }
 
+/**
+ * @brief Returns current time in milliseconds.
+ *
+ * Convenience function that returns the current monotonic time in
+ * milliseconds by dividing now_ns() by 1,000,000.
+ *
+ * @return Current time in milliseconds
+ */
 static inline u32 now_ms(void)
 {
     return (u32)(now_ns() / 1000000);
 }
+
+/**
+ * @brief Closes the specified file descriptor.
+ *
+ * Attempts to close the provided socket file descriptor and logs the result.
+ *
+ * @param[in] fd File descriptor to close.
+ * @return RESULT_OK on success, RESULT_SOCKET_CLOSE_ERROR on failure, or RESULT_ARGUMENT_ERROR if sock is invalid.
+ */
+int fd_close(int fd);
 /***********************************************************************************************/
 
