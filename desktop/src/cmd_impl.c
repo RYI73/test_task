@@ -38,6 +38,8 @@ static u16 sequence = 0x10;
 commands_t commands[] = {
     {"send_str",        cmd_send_string,            "Send string to server."},
     {"send_bin",        cmd_send_binary,            "Send binary array to server."},
+    {"stats_get",       cmd_get_statisctics,        "Get statistics from server."},
+    {"stats_clr",       cmd_clr_statisctics,        "Clear statistics on server."},
     {"exit",            cmd_empty,                  "Exit from testtask (or press Ctrl-D)."}
 };
 /***********************************************************************************************/
@@ -139,13 +141,32 @@ static int cmd_transaction(packet_t *request, packet_t *replay)
         /* Validate reply */
         int res = protocol_packet_validate(replay);
         if (isOk(res)) {
-            if (replay->packet.header.type == PACKET_TYPE_ANSWER) {
+            if (replay->packet.header.type == PACKET_TYPE_ANSWER_DATA) {
                 if (isOk(replay->packet.header.answer_result)) {
                     print_string("Server responded OK on packet %u\n",  replay->packet.header.answer_sequence);
                 }
                 else {
                     print_string("Server returned an error %u on packet %u\n",  replay->packet.header.answer_result, replay->packet.header.answer_sequence);
                 }
+            }
+            else if (replay->packet.header.type == PACKET_TYPE_ANSWER_STATS) {
+                server_stats_t *g_stats = (server_stats_t *)replay->packet.data;
+
+                const char total_bytes[] = "Total bytes"DOTS;
+                const char broken_bytes[] = "Broken bytes"DOTS;
+                const char avg_latency_bytes[] = "Average latency"DOTS;
+                const char min_latency_bytes[] = "Min latency"DOTS;
+                const char max_latency_bytes[] = "Max latency"DOTS;
+                const char throughput[] = "Throughput"DOTS;
+
+                print_string("Statistics:\n");
+                print_string("%-.*s%u bytes\n", STATUS_NAME_SIZE, total_bytes, g_stats->requests.total_requests);
+                print_string("%-.*s%u bytes\n", STATUS_NAME_SIZE, broken_bytes, g_stats->requests.broken_requests);
+                print_string("%-.*s%u ms\n", STATUS_NAME_SIZE, avg_latency_bytes, g_stats->latency.avg_latency);
+                print_string("%-.*s%u ms\n", STATUS_NAME_SIZE, min_latency_bytes, g_stats->latency.min_latency_ms);
+                print_string("%-.*s%u ms\n", STATUS_NAME_SIZE, max_latency_bytes, g_stats->latency.max_latency_ms);
+                print_string("%-.*s%u kbps\n", STATUS_NAME_SIZE, throughput, g_stats->throughput);
+
             }
             else {
                 print_string("Server responded with unknown type: %u\n",  replay->packet.header.type);
@@ -307,5 +328,51 @@ void cmd_send_binary(int cli_argc, const char **cli_argv)
 
         } while(0);
     }
+}
+/***********************************************************************************************/
+void cmd_get_statisctics(int cli_argc, const char **cli_argv)
+{
+    UNUSED(cli_argc);
+    UNUSED(cli_argv);
+
+    size_t len = 0;
+    packet_t request = {0};
+    packet_t replay = {0};
+    int result = RESULT_OK;
+
+    do {
+        /* Prepare packet to server */
+        request.packet.header.type = PACKET_TYPE_GET_STATS;
+        protocol_packet_prepare(&request, sequence++, len);
+
+        result = cmd_transaction(&request, &replay);
+        if (!isOk(result)) {
+            break;
+        }
+
+    } while(0);
+}
+/***********************************************************************************************/
+void cmd_clr_statisctics(int cli_argc, const char **cli_argv)
+{
+    UNUSED(cli_argc);
+    UNUSED(cli_argv);
+
+    size_t len = 0;
+    packet_t request = {0};
+    packet_t replay = {0};
+    int result = RESULT_OK;
+
+    do {
+        /* Prepare packet to server */
+        request.packet.header.type = PACKET_TYPE_CLR_STATS;
+        protocol_packet_prepare(&request, sequence++, len);
+
+        result = cmd_transaction(&request, &replay);
+        if (!isOk(result)) {
+            break;
+        }
+
+    } while(0);
 }
 /***********************************************************************************************/

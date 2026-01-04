@@ -442,21 +442,6 @@ int socket_close(int sock)
     return result;
 }
 /***********************************************************************************************/
-int fd_close(int fd)
-{
-    int result = RESULT_ARGUMENT_ERROR;
-    if (fd >= 0) {
-        if (close(fd) < 0) {
-            log_msg(LOG_ERR, "Can't close fd %d, errno = %d [%s]", fd, errno, strerror(errno));
-            result = RESULT_FILE_CLOSE_ERROR;
-        }
-        else {
-            result = RESULT_OK;
-        }
-    }
-    return result;
-}
-/***********************************************************************************************/
 int socket_send_data(int sock, void* buff, ssize_t sz)
 {
     const uint8_t *p = buff;

@@ -71,4 +71,20 @@ void cmd_send_string(int cli_argc, const char **cli_argv);
  * @param[in] cli_argv Array of argument strings
  */
 void cmd_send_binary(int cli_argc, const char **cli_argv);
+
+/**
+ * @brief Get statistics from server.
+ *
+ * @param[in] cli_argc Number of arguments
+ * @param[in] cli_argv Array of argument strings
+ */
+void cmd_get_statisctics(int cli_argc, const char **cli_argv);
+
+/**
+ * @brief Clear statistics on server.
+ *
+ * @param[in] cli_argc Number of arguments
+ * @param[in] cli_argv Array of argument strings
+ */
+void cmd_clr_statisctics(int cli_argc, const char **cli_argv);
 /***********************************************************************************************/

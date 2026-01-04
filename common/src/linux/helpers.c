@@ -41,6 +41,42 @@ void print_string(const char* message, ...)
     UNLOCK(lock);
 }
 /***********************************************************************************************/
+void print_dump(u8 *buff, u32 sz, char *pref)
+{
+    LOCK(lock);
+    char str[64];
+    if (pref != NULL) {
+        snprintf(str, sizeof(str), "[%s] ", pref);
+    }
+
+    printf("%sDump (%u bytes):\r\n", pref==NULL?"":str, sz);
+    char symbols[16] = {0};
+    u32 symCntr = 0;
+    for (u32 j=0; j<sz; j++) {
+        if (j % 16 == 0) {
+            printf("%06Xh: ", j);
+        }
+        printf("%02X ", buff[j]);
+        symbols[symCntr++] = buff[j];
+        u32 p = j+1;
+        if (p % 16 == 0 || p == sz) {
+            if (p == sz && p % 16 != 0) {
+                for (u32 i=0; i<16 - p % 16; i++) {
+                    printf("   ");
+                }
+            }
+            printf("| ");
+            for (u32 i=0; i<symCntr; i++) {
+                printf("%c", (isalpha((int)symbols[i]) || isdigit((int)symbols[i])) ? symbols[i] : '.');
+            }
+            symCntr = 0;
+            printf("\n");
+        }
+    }
+    printf("\n");
+    UNLOCK(lock);
+}
+/***********************************************************************************************/
 char *strupr(char *str)
 {
     char *s = str;
@@ -258,6 +294,20 @@ int bytes_to_hexstr(const u8 *data, size_t len, char *out, size_t out_size)
 
     out[pos] = '\0';
 
+    return result;
+}
+/***********************************************************************************************/
+int fd_close(int fd)
+{
+    int result = RESULT_ARGUMENT_ERROR;
+    if (fd >= 0) {
+        if (close(fd) < 0) {
+            result = RESULT_FILE_CLOSE_ERROR;
+        }
+        else {
+            result = RESULT_OK;
+        }
+    }
     return result;
 }
 /***********************************************************************************************/

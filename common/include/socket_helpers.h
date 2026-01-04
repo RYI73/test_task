@@ -41,16 +41,6 @@ int socket_tcp_server_create(int *ssock, const char *server_ip, u16 server_port,
 int socket_close(int sock);
 
 /**
- * @brief Closes the specified file descriptor.
- *
- * Attempts to close the provided socket file descriptor and logs the result.
- *
- * @param[in] fd File descriptor to close.
- * @return RESULT_OK on success, RESULT_SOCKET_CLOSE_ERROR on failure, or RESULT_ARGUMENT_ERROR if sock is invalid.
- */
-int fd_close(int fd);
-
-/**
  * @brief Sends a raw message through a socket.
  *
  * Sends the data buffer of the specified size through the given socket.

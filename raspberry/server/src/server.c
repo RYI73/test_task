@@ -30,6 +30,7 @@
 #include "helpers.h"
 
 static u16 sequence = 0x20;
+static server_stats_t g_stats = {0};
 
 /***********************************************************************************************/
 /* Internal functions                                                                          */
@@ -93,6 +94,52 @@ static void accept_new_client(int listen_fd, struct pollfd *pfds)
     } while(0);
 }
 /***********************************************************************************************/
+static void stats_init(void)
+{
+    g_stats.requests.total_requests = 0;
+    g_stats.requests.broken_requests = 0;
+
+    g_stats.bytes.total_bytes = 0;
+
+    g_stats.latency.total_latency_ns = 0;
+    g_stats.latency.max_latency_ms = 0;
+    g_stats.latency.min_latency_ms = UINT32_MAX;
+
+    g_stats.runtime.start_time_ns = now_ns();
+}
+
+/***********************************************************************************************/
+static void stats_update(u64 request_bytes, u32 latency_ms, bool broken)
+{
+    g_stats.requests.total_requests += 1;
+    if (broken) {
+        g_stats.requests.broken_requests += 1;
+    }
+
+    g_stats.bytes.total_bytes += request_bytes;
+
+    g_stats.latency.total_latency_ns += (u64)latency_ms * 1000000ULL;
+    if (latency_ms > g_stats.latency.max_latency_ms) {
+        g_stats.latency.max_latency_ms = latency_ms;
+    }
+    if (latency_ms < g_stats.latency.min_latency_ms) {
+        g_stats.latency.min_latency_ms = latency_ms;
+    }
+}
+/***********************************************************************************************/
+static void stats_compute(u32 *avg_latency_ms, u64 *throughput_kbps)
+{
+    u64 now = now_ns();
+    u32 elapsed_s = (u32)((now - g_stats.runtime.start_time_ns) / 1000000000ULL);
+    if (elapsed_s == 0) elapsed_s = 1;
+
+    *avg_latency_ms = g_stats.requests.total_requests ?
+                      (u32)((g_stats.latency.total_latency_ns / 1000000ULL) / g_stats.requests.total_requests)
+                      : 0;
+
+    *throughput_kbps = (g_stats.bytes.total_bytes * 8ULL) / elapsed_s / 1000ULL;
+}
+/***********************************************************************************************/
 /**
  * @brief Handle a single client socket: read, validate, prepare reply, and send.
  *
@@ -102,15 +149,21 @@ static void handle_client(int client_fd)
 {
     int result = RESULT_OK;
     int res_pack = RESULT_OK;
-    size_t len = 0;
+    size_t len_in = 0;
+    size_t len_out = 0;
+    u32 latency_ms = 0;
     packet_t request = {0};
     packet_t reply   = {0};
+    ssize_t received = sizeof(request.buffer);
+    u8  type = PACKET_TYPE_ANSWER_DATA;
+
+    u64 start_ns = now_ns();
 
     do {
         memset(request.buffer, 0, sizeof(request.buffer));
         memset(reply.buffer, 0, sizeof(reply.buffer));
+        len_out = 0;
 
-        ssize_t received = sizeof(request.buffer);
         result = socket_read_data(client_fd, request.buffer, &received, SOCKET_READ_TIMEOUT_MS);
         if (!isOk(result) || received == 0) {
             log_msg(LOG_ERR, "Server recv failed");
@@ -124,8 +177,8 @@ static void handle_client(int client_fd)
                 case PACKET_TYPE_STRING: {
                     log_msg(LOG_DEBUG, "Received STRING: '%.32s%s'", request.packet.data,
                             strlen(request.packet.data) > 32 ? "..." : "");
-                    len = strlen(request.packet.data);
-                    if (len < strlen(CLIENT_MESSAGE) || memcmp(request.packet.data, CLIENT_MESSAGE, len) != 0) {
+                    len_in = strlen(request.packet.data);
+                    if (len_in < strlen(CLIENT_MESSAGE) || memcmp(request.packet.data, CLIENT_MESSAGE, len_in) != 0) {
                         res_pack = RESULT_BROKEN_MSG_ERROR;
                     }
                     break;
@@ -142,6 +195,28 @@ static void handle_client(int client_fd)
                     break;
                 }
 
+                case PACKET_TYPE_GET_STATS: {
+                    len_out = sizeof(server_stats_t);
+                    stats_compute(&g_stats.latency.avg_latency, &g_stats.throughput);
+                    memcpy(reply.packet.data, &g_stats, len_out);
+                    type = PACKET_TYPE_ANSWER_STATS;
+
+                    log_msg(LOG_INFO,
+                            "Requests: total=%u broken=%u, avg latency=%u ms, min=%u ms, max=%u ms, throughput=%llu kbps",
+                            g_stats.requests.total_requests,
+                            g_stats.requests.broken_requests,
+                            g_stats.latency.avg_latency,
+                            g_stats.latency.min_latency_ms,
+                            g_stats.latency.max_latency_ms,
+                            g_stats.throughput);
+                    break;
+                }
+
+                case PACKET_TYPE_CLR_STATS: {
+                    stats_init();
+                    break;
+                }
+
                 default: {
                     res_pack = RESULT_TYPE_UNKNOWN_ERROR;
                     log_msg(LOG_DEBUG, "Unknown packet type: %u", request.packet.header.type);
@@ -153,18 +228,23 @@ static void handle_client(int client_fd)
         }
 
         /* Prepare and send reply */
-        reply.packet.header.type = PACKET_TYPE_ANSWER;
+        reply.packet.header.type = type;
         reply.packet.header.answer_sequence = request.packet.header.sequence;
         reply.packet.header.answer_result = res_pack;
-        protocol_packet_prepare(&reply, sequence++, 0);
+        protocol_packet_prepare(&reply, sequence++, len_out);
 
-        result = socket_send_data(client_fd, reply.buffer, PACKET_HEADER_SIZE);
+        result = socket_send_data(client_fd, reply.buffer, PACKET_HEADER_SIZE + len_out);
         if (!isOk(result)) {
             log_msg(LOG_ERR, "Server send failed");
             result = RESULT_SOCKET_ERROR;
         }
 
     } while(0);
+
+    u64 end_ns = now_ns();
+    latency_ms = (u32)((end_ns - start_ns) / 1000000ULL);
+
+    stats_update(received, latency_ms, !isOk(res_pack));
 
     /* Close client socket in any case */
     socket_close(client_fd);
@@ -224,6 +304,8 @@ int main(void)
         for (int i = 1; i <= MAX_CLIENTS; i++) {
             pfds[i].fd = -1;
         }
+
+        stats_init();
 
         /* Main poll loop */
         while (is_running) {

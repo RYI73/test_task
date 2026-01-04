@@ -28,6 +28,29 @@
 void print_string(const char* message, ...);
 
 /**
+ * @brief Print a hex + ASCII dump of a buffer. ONLY FOR DEBUG. NOT FOR RELEASE !!!
+ *
+ * This function prints the contents of a buffer in a standard hex dump format,
+ * 16 bytes per line, along with the ASCII representation on the side. Non-printable
+ * characters are shown as dots ('.'). Optionally, a prefix string can be prepended
+ * to each dump line for easier identification in logs.
+ *
+ * The function is thread-safe if `LOCK`/`UNLOCK` macros properly protect output.
+ *
+ * @param buff  Pointer to the buffer to be dumped.
+ * @param sz    Size of the buffer in bytes.
+ * @param pref  Optional prefix string to print before each line. Can be NULL.
+ *
+ * @note If the buffer size exceeds `MAX_DUMP_BUFFER_SIZE`, the function
+ *       currently ignores truncation (commented out in code).
+ *
+ * @example
+ * u8 data[32] = {0x01, 0x02, 0x41, 0x42, 0x43, ...};
+ * print_dump(data, sizeof(data), "RX");
+ */
+void print_dump(u8 *buff, u32 sz, char *pref);
+
+/**
  * @brief Signal handler for SIGINT (Ctrl-C).
  *
  * This function is invoked automatically when the process receives
@@ -186,5 +209,15 @@ static inline u32 now_ms(void)
 {
     return (u32)(now_ns() / 1000000);
 }
+
+/**
+ * @brief Closes the specified file descriptor.
+ *
+ * Attempts to close the provided socket file descriptor and logs the result.
+ *
+ * @param[in] fd File descriptor to close.
+ * @return RESULT_OK on success, RESULT_SOCKET_CLOSE_ERROR on failure, or RESULT_ARGUMENT_ERROR if sock is invalid.
+ */
+int fd_close(int fd);
 /***********************************************************************************************/
 

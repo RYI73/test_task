@@ -11,8 +11,39 @@
 enum packet_type_e {
     PACKET_TYPE_STRING,
     PACKET_TYPE_ARRAY,
-    PACKET_TYPE_ANSWER
+    PACKET_TYPE_GET_STATS,
+    PACKET_TYPE_CLR_STATS,
+    PACKET_TYPE_ANSWER_DATA,
+    PACKET_TYPE_ANSWER_STATS
 };
+/***********************************************************************************************/
+typedef struct {
+    u32 total_requests;
+    u32 broken_requests;
+} stats_requests_t;
+
+typedef struct {
+    u64 total_bytes;
+} stats_bytes_t;
+
+typedef struct {
+    u64 total_latency_ns;
+    u32 max_latency_ms;
+    u32 min_latency_ms;
+    u32 avg_latency;
+} stats_latency_t;
+
+typedef struct {
+    u64 start_time_ns;
+} stats_runtime_t;
+
+typedef struct {
+    stats_requests_t requests;
+    stats_bytes_t    bytes;
+    stats_latency_t  latency;
+    stats_runtime_t  runtime;
+    u64 throughput;
+} server_stats_t;
 /***********************************************************************************************/
 typedef struct {
     struct {

@@ -44,6 +44,7 @@ int protocol_packet_validate(packet_t *packet)
             result = RESULT_BAD_PREFIX_ERROR;
             break;
         }
+
         if (packet->packet.header.crc != crc16(packet->buffer + PACKET_HEADER_CRC_OFFSET, packet->packet.header.len + PACKET_HEADER_CRC_SIZE)) {
             log_msg(LOG_ERR, "❌ Error: bad CRC. Expected 0x%04X, got 0x%04X",
                     crc16(packet->buffer + PACKET_HEADER_CRC_OFFSET,
