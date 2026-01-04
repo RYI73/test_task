@@ -1,5 +1,5 @@
 /*******************************************************************************
- *   @file   src/socket_helpers.c
+ *   @file   src/linux/socket_helpers.c
  *   @brief  Implementation of socket helper functions.
  *   @author Ruslan
 ********************************************************************************

@@ -8,11 +8,12 @@
  * @brief Header used to frame IPv4 packets over SPI
  */
 typedef struct __attribute__((packed)) {
-    uint32_t magic;     /**< SPI_MAGIC constant */
-    uint8_t version;    /**< Protocol version (0x01) */
-    uint8_t flags;      /**< Reserved flags */
-    uint16_t length;    /**< Length of IPv4 packet in bytes */
+    u32 magic;     /**< SPI_MAGIC constant */
+    u8 version;    /**< Protocol version (0x01) */
+    u8 flags;      /**< Reserved flags */
+    u16 length;    /**< Length of IPv4 packet in bytes */
 } spi_ip_hdr_t;
+
 /***********************************************************************************************/
 /**
  * @brief Initialize SPI device using spidev interface.
@@ -37,7 +38,7 @@ int spi_init(const char *device, int *spi_fd);
  * @param length Pointer to store received length
  * @return 0 on success, -1 on error
  */
-int spi_receive(int spi_fd, int gpio_fd, uint8_t *out_buf, uint16_t *length);
+int spi_receive(int spi_fd, int gpio_fd, u8 *out_buf, u16 *length);
 
 /**
  * @brief Send an SPI packet including header and CRC
@@ -48,7 +49,7 @@ int spi_receive(int spi_fd, int gpio_fd, uint8_t *out_buf, uint16_t *length);
  * @param len Length of payload
  * @return 0 on success, -1 on error
  */
-int spi_send_packet(int spi_fd, int gpio_fd, uint8_t *data, uint16_t len);
+int spi_send_packet(int spi_fd, int gpio_fd, u8 *data, u16 len);
 
 /**
  * @brief Receive a SPI transfer with timeout waiting for READY GPIO
@@ -58,7 +59,7 @@ int spi_send_packet(int spi_fd, int gpio_fd, uint8_t *data, uint16_t len);
  * @param out Output buffer
  * @return 0 on success, -1 on error
  */
-int spi_recv_transfer(int spi_fd, int gpio_fd, uint8_t *out);
+int spi_recv_transfer(int spi_fd, int gpio_fd, u8 *out);
 
 /**
  * @brief Send a SPI transfer with timeout waiting for READY GPIO
@@ -69,6 +70,6 @@ int spi_recv_transfer(int spi_fd, int gpio_fd, uint8_t *out);
  * @param len Length of data
  * @return 0 on success, -1 on error
  */
-int spi_send_transfer(int spi_fd, int gpio_fd, const uint8_t *data, size_t len);
+int spi_send_transfer(int spi_fd, int gpio_fd, const u8 *data, size_t len);
 
 /***********************************************************************************************/
