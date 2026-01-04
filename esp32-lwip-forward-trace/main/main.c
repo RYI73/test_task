@@ -46,14 +46,6 @@
 /* ===================== GLOBALS ===================== */
 static EventGroupHandle_t wifi_event_group;
 
-//static uint8_t spi_rx_buf[PKT_LEN*2];
-//static uint8_t spi_tx_buf[PKT_LEN*2];
-
-//static char *send_tx_buf = NULL;
-//static char *send_rx_buf = NULL;
-//static char *recv_tx_buf = NULL;
-//static char *recv_rx_buf = NULL;
-
 static QueueHandle_t spi_tx_queue;
 static struct netif vnetif;
 
@@ -89,22 +81,6 @@ static void gpio_ready_init(void)
     gpio_set_pull_mode(GPIO_SCLK, GPIO_PULLUP_ONLY);
     gpio_set_pull_mode(GPIO_CS, GPIO_PULLUP_ONLY);
 }
-/***********************************************************************************************/
-///**
-// * @brief Called after SPI transaction setup, sets handshake high
-// */
-//void my_post_setup_cb(spi_slave_transaction_t *trans)
-//{
-//    gpio_set_level(GPIO_SPI_READY, 1);
-//}
-///***********************************************************************************************/
-///**
-// * @brief Called after SPI transaction complete, sets handshake low
-// */
-//void my_post_trans_cb(spi_slave_transaction_t *trans)
-//{
-//    gpio_set_level(GPIO_SPI_READY, 0);
-//}
 /***********************************************************************************************/
 /**
  * @brief Forward an IPv4 packet from SPI to lwIP stack
@@ -149,143 +125,6 @@ static void spi_ipv4_forward(const uint8_t *buf, size_t len)
 
     pbuf_free(q);
 }
-/***********************************************************************************************/
-///**
-// * @brief Initialize SPI slave interface and allocate DMA memory
-// */
-//static void spi_slave_init(void)
-//{
-//    spi_bus_config_t buscfg = {
-//        .mosi_io_num = GPIO_MOSI,
-//        .miso_io_num = GPIO_MISO,
-//        .sclk_io_num = GPIO_SCLK,
-//        .quadwp_io_num = -1,
-//        .quadhd_io_num = -1,
-//    };
-
-//    spi_slave_interface_config_t slvcfg = {
-//        .mode = 0,
-//        .spics_io_num = GPIO_CS,
-//        .queue_size = 3,
-//        .flags = 0,
-//        .post_setup_cb = my_post_setup_cb,
-//        .post_trans_cb = my_post_trans_cb
-//    };
-
-//    ESP_ERROR_CHECK(spi_slave_initialize(SPI_HOST, &buscfg, &slvcfg, SPI_DMA_CH_AUTO));
-
-//    send_tx_buf = spi_bus_dma_memory_alloc(SPI_HOST, PKT_LEN*2, 0);
-//    send_rx_buf = spi_bus_dma_memory_alloc(SPI_HOST, PKT_LEN*2, 0);
-//    recv_tx_buf = spi_bus_dma_memory_alloc(SPI_HOST, PKT_LEN*2, 0);
-//    recv_rx_buf = spi_bus_dma_memory_alloc(SPI_HOST, PKT_LEN*2, 0);
-//    assert(send_tx_buf && send_rx_buf && recv_tx_buf && recv_rx_buf);
-
-//    log_msg(LOG_INFO, "SPI slave initialized");
-//}
-/***********************************************************************************************/
-///**
-// * @brief Send raw SPI packet to master
-// * @param data Pointer to payload
-// * @return ESP_OK if success
-// */
-//esp_err_t spi_slave_send_packet(const uint8_t *data)
-//{
-//    if (!data || !send_tx_buf || !send_rx_buf) {
-//        log_msg(LOG_INFO, "Send NULL ptr.)", PKT_LEN);
-//        return ESP_FAIL;
-//    }
-
-//    memcpy(send_tx_buf, data, PKT_LEN);
-
-//    spi_slave_transaction_t t = {
-//        .length    = PKT_LEN * 8,
-//        .tx_buffer = send_tx_buf,
-//        .rx_buffer = send_rx_buf,
-//    };
-
-//    esp_err_t ret = spi_slave_transmit(SPI_HOST, &t, pdMS_TO_TICKS(1000));
-//    if (ret != ESP_OK) {
-//        log_msg(LOG_WARNING, "SPI send failed: %d", ret);
-//        return ret;
-//    }
-
-//    return ESP_OK;
-//}
-///***********************************************************************************************/
-///**
-// * @brief Receive raw SPI packet from master
-// * @param rx_packet Pointer to output buffer
-// * @param timeout_ms Timeout in ms
-// * @return ESP_OK if success
-// */
-//esp_err_t spi_slave_recv_packet(uint8_t *rx_packet, TickType_t timeout_ms)
-//{
-//    if (!rx_packet || !recv_tx_buf || !recv_rx_buf) {
-//        log_msg(LOG_INFO, "Recv NULL ptr.)", PKT_LEN);
-//        return ESP_FAIL;
-//    }
-
-//    memset(recv_rx_buf, 0, PKT_LEN);
-
-//    spi_slave_transaction_t t = {
-//        .length    = PKT_LEN * 8,
-//        .tx_buffer = recv_tx_buf,
-//        .rx_buffer = recv_rx_buf,
-//    };
-
-//    esp_err_t ret = spi_slave_transmit(SPI_HOST, &t, timeout_ms);
-//    if (ret != ESP_OK) {
-//        log_msg(LOG_WARNING, "SPI recv failed: %d", ret);
-//        return ret;
-//    }
-
-//    memcpy(rx_packet, recv_rx_buf, PKT_LEN);
-//    return ESP_OK;
-//}
-///***********************************************************************************************/
-///**
-// * @brief Send IPv4 packet to SPI master with header + CRC32
-// */
-//static esp_err_t spi_send_ip(const uint8_t *data, size_t len)
-//{
-//    if (!data || len == 0 || len > PKT_LEN - sizeof(spi_ip_hdr_t)) return ESP_ERR_INVALID_ARG;
-
-//    spi_ip_hdr_t hdr = { .magic = SPI_MAGIC, .version = SPI_PROTO_VERSION, .flags = 0, .length = len };
-//    uint32_t crc = esp_crc32_le(0, data, len);
-//    size_t off = 0;
-
-//    memcpy(&spi_tx_buf[off], &hdr, sizeof(hdr)); off += sizeof(hdr);
-//    memcpy(&spi_tx_buf[off], data, len);         off += len;
-//    memcpy(&spi_tx_buf[off], &crc, sizeof(crc)); off += sizeof(crc);
-
-//    return spi_slave_send_packet(spi_tx_buf);
-//}
-///***********************************************************************************************/
-///**
-// * @brief Receive IPv4 packet from SPI master with CRC check
-// */
-//static esp_err_t spi_recv_ip(uint8_t *out_buf, uint16_t *length, TickType_t timeout_ms)
-//{
-//    memset(spi_rx_buf, 0, sizeof(spi_rx_buf));
-//    esp_err_t ret = spi_slave_recv_packet(spi_rx_buf, timeout_ms);
-//    if (ret != ESP_OK) return ret;
-
-//    spi_ip_hdr_t *hdr = (spi_ip_hdr_t *)spi_rx_buf;
-//    if (hdr->magic != SPI_MAGIC || hdr->version != SPI_PROTO_VERSION) return ESP_FAIL;
-
-//    if (hdr->length == 0 || hdr->length > PKT_LEN - sizeof(spi_ip_hdr_t) - sizeof(uint32_t)) return ESP_FAIL;
-
-//    uint8_t *payload = spi_rx_buf + sizeof(spi_ip_hdr_t);
-//    uint32_t rx_crc;
-//    memcpy(&rx_crc, payload + hdr->length, sizeof(rx_crc));
-
-//    if (rx_crc != esp_crc32_le(0, payload, hdr->length)) return ESP_FAIL;
-
-//    memcpy(out_buf, payload, hdr->length);
-//    *length = hdr->length;
-
-//    return ESP_OK;
-//}
 /***********************************************************************************************/
 /**
  * @brief Log IPv4 and TCP packet details for debugging.
@@ -445,16 +284,15 @@ static void spi_rx_task(void *arg)
     queue_pkt_t tx_pkt = {0};
 
     while (1) {
+        /* Wait for SPI transaction done event via semaphore */
         if (isOk(spi_receive(spi_fd, 0, buf, &length))) {
-            log_msg(LOG_INFO, "\nReceived valid SPI packet (%d bytes):", length);
+            log_msg(LOG_INFO, "Received valid SPI packet (%d bytes)", length);
             spi_ipv4_forward(buf, length);
         }
 
         if (xQueueReceive(spi_tx_queue, &tx_pkt, 0)) {
             spi_send_packet(spi_fd, 0, tx_pkt.data, tx_pkt.len);
         }
-
-        vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
 /***********************************************************************************************/
@@ -487,10 +325,23 @@ void app_main(void)
             log_msg(LOG_ERR, "Spi initialization error: %u", result);
             break;
         }
+
         wifi_init();
 
         log_msg(LOG_INFO, "Waiting for IP...");
-        xEventGroupWaitBits(wifi_event_group, WIFI_GOT_IP_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
+        EventBits_t bits = xEventGroupWaitBits(
+            wifi_event_group,
+            WIFI_GOT_IP_BIT,
+            pdFALSE,
+            pdTRUE,
+            pdMS_TO_TICKS(WAIT_IP_TIMEOUT_MS)
+        );
+
+        if ((bits & WIFI_GOT_IP_BIT) == 0) {
+            log_msg(LOG_ERR, "WiFi IP not acquired within %u ms, timeout", WAIT_IP_TIMEOUT_MS);
+            result = RESULT_TIMEOUT;
+            break;
+        }
 
         virtual_netif_init();
 

@@ -39,6 +39,7 @@
 /** poll() timeout in milliseconds */
 #define CONNECT_TIMEOUT_MS                      (500)
 #define POLL_TIMEOUT_MS                         (500)
+#define WAIT_IP_TIMEOUT_MS                      (60000)
 
 /** SPI protocol config */
 #define SPI_MAGIC                               (0x49504657)      /**< Magic constant ('IPFW') for SPI framing */

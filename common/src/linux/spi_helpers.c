@@ -36,6 +36,22 @@ static u8 rx_buff[PKT_LEN + 1];
 /***********************************************************************************************/
 /* Internal functions                                                                          */
 /***********************************************************************************************/
+/**
+ * @brief Perform a single SPI receive transaction using ioctl interface.
+ *
+ * Waits for the SPI slave device to be ready via GPIO before performing
+ * the SPI transfer. Copies the received data into the provided output buffer.
+ *
+ * @param[in]  spi_fd   File descriptor of the SPI device
+ * @param[in]  gpio_fd  File descriptor of the GPIO used to check device readiness
+ * @param[out] out      Buffer to store received SPI data (must be at least PKT_LEN bytes)
+ *
+ * @return RESULT_OK if data was successfully received
+ * @return RESULT_ARGUMENT_ERROR if the output buffer is NULL
+ * @return RESULT_FILE_READ_ERROR if reading the GPIO fails
+ * @return RESULT_TIMEOUT if the SPI device does not become ready within 500 ms
+ * @return RESULT_INTERNAL_ERROR if ioctl SPI transfer fails
+ */
 static int spi_recv_transfer(int spi_fd, int gpio_fd, u8 *out)
 {
     int result = RESULT_OK;
@@ -71,7 +87,7 @@ static int spi_recv_transfer(int spi_fd, int gpio_fd, u8 *out)
             if (gpio_value == '1') {
                 break;
             }
-            if (now_ms() - start >= 500) {
+            if (now_ms() - start >= POLL_TIMEOUT_MS) {
                 result = RESULT_TIMEOUT;
                 break;
             }
@@ -93,6 +109,23 @@ static int spi_recv_transfer(int spi_fd, int gpio_fd, u8 *out)
     return result;
 }
 /***********************************************************************************************/
+/**
+ * @brief Perform a single SPI send transaction using ioctl interface.
+ *
+ * Waits for the SPI slave device to be ready via GPIO before performing
+ * the SPI transfer. Copies data from the provided buffer to the SPI device.
+ *
+ * @param[in]  spi_fd   File descriptor of the SPI device
+ * @param[in]  gpio_fd  File descriptor of the GPIO used to check device readiness
+ * @param[in]  data     Buffer containing data to send
+ * @param[in]  len      Length of the data to send (must be <= PKT_LEN)
+ *
+ * @return RESULT_OK if data was successfully sent
+ * @return RESULT_ARGUMENT_ERROR if data is NULL or length is 0
+ * @return RESULT_FILE_READ_ERROR if reading the GPIO fails
+ * @return RESULT_TIMEOUT if the SPI device does not become ready within 500 ms
+ * @return RESULT_INTERNAL_ERROR if ioctl SPI transfer fails
+ */
 static int spi_send_transfer(int spi_fd, int gpio_fd, const u8 *data, size_t len)
 {
     int result = RESULT_OK;
@@ -128,7 +161,7 @@ static int spi_send_transfer(int spi_fd, int gpio_fd, const u8 *data, size_t len
             if (gpio_value == '1') {
                 break;
             }
-            if (now_ms() - start >= 500) {
+            if (now_ms() - start >= POLL_TIMEOUT_MS) {
                 result = RESULT_TIMEOUT;
                 break;
             }
@@ -146,79 +179,8 @@ static int spi_send_transfer(int spi_fd, int gpio_fd, const u8 *data, size_t len
     } while(0);
 
     return result;
-}/***********************************************************************************************/
-int spi_receive(int spi_fd, int gpio_fd, u8 *out_buf, u16 *length)
-{
-    int result = RESULT_NOT_INITED;
-
-    do {
-        memset(rx_buff, 0, sizeof(rx_buff));
-        result = spi_recv_transfer(spi_fd, gpio_fd, rx_buff);
-        if (!isOk(result)) {
-            break;
-        }
-
-        spi_ip_hdr_t *hdr = (spi_ip_hdr_t *)rx_buff;
-        if (hdr->magic != SPI_MAGIC) {
-            result = RESULT_BAD_PREFIX_ERROR;
-            break;
-        }
-
-        if (hdr->length == 0 || hdr->length > PKT_LEN) {
-            log_msg(LOG_ERR, "Bad SPI packet length: %u", hdr->length);
-            result = RESULT_FULL_BUFFER_ERROR;
-            break;
-        }
-
-        u8 *payload = rx_buff + sizeof(spi_ip_hdr_t);
-        u32 recv_crc;
-        memcpy(&recv_crc, payload + hdr->length, sizeof(recv_crc));
-
-        if (recv_crc != crc32(0, payload, hdr->length)) {
-            log_msg(LOG_ERR, "SPI CRC check failed");
-            result = RESULT_BAD_CRC_ERROR;
-            break;
-        }
-
-        memcpy(out_buf, payload, hdr->length);
-        *length = hdr->length;
-        result = RESULT_OK;
-
-    } while(0);
-
-    return result;
-}/***********************************************************************************************/
-int spi_send_packet(int spi_fd, int gpio_fd, u8 *data, u16 len)
-{
-    int result = RESULT_OK;
-
-    do {
-        if (!data || len == 0 || len > PKT_LEN) {
-            log_msg(LOG_ERR, "Invalid SPI packet length %u", len);
-            result = RESULT_ARGUMENT_ERROR;
-            break;
-        }
-
-        spi_ip_hdr_t hdr = {
-            .magic = SPI_MAGIC,
-            .version = 0x01,
-            .flags = 0,
-            .length = len
-        };
-
-        u32 crc = crc32(0, data, len);
-        u8 buf[PKT_LEN] = {0};
-        size_t offset = 0;
-        memcpy(buf + offset, &hdr, sizeof(hdr)); offset += sizeof(hdr);
-        memcpy(buf + offset, data, len); offset += len;
-        memcpy(buf + offset, &crc, sizeof(crc));
-
-        result = spi_send_transfer(spi_fd, gpio_fd, buf, sizeof(buf));
-
-    } while(0);
-
-    return result;
-}/***********************************************************************************************/
+}
+/***********************************************************************************************/
 /* External functions                                                                          */
 /***********************************************************************************************/
 int spi_init(const char *device, int *spi_fd)
@@ -262,8 +224,77 @@ int spi_init(const char *device, int *spi_fd)
     return result;
 }
 /***********************************************************************************************/
-int spi_close(int fd)
+int spi_receive(int spi_fd, int gpio_fd, u8 *out_buf, u16 *length)
 {
-    return fd_close(fd);
+    int result = RESULT_NOT_INITED;
+
+    do {
+        memset(rx_buff, 0, sizeof(rx_buff));
+        result = spi_recv_transfer(spi_fd, gpio_fd, rx_buff);
+        if (!isOk(result)) {
+            break;
+        }
+
+        spi_ip_hdr_t *hdr = (spi_ip_hdr_t *)rx_buff;
+        if (hdr->magic != SPI_MAGIC) {
+            result = RESULT_BAD_PREFIX_ERROR;
+            break;
+        }
+
+        if (hdr->length == 0 || hdr->length > PKT_LEN) {
+            log_msg(LOG_ERR, "Bad SPI packet length: %u", hdr->length);
+            result = RESULT_FULL_BUFFER_ERROR;
+            break;
+        }
+
+        u8 *payload = rx_buff + sizeof(spi_ip_hdr_t);
+        u32 recv_crc;
+        memcpy(&recv_crc, payload + hdr->length, sizeof(recv_crc));
+
+        if (recv_crc != crc32(0, payload, hdr->length)) {
+            log_msg(LOG_ERR, "SPI CRC check failed");
+            result = RESULT_BAD_CRC_ERROR;
+            break;
+        }
+
+        memcpy(out_buf, payload, hdr->length);
+        *length = hdr->length;
+        result = RESULT_OK;
+
+    } while(0);
+
+    return result;
+}
+/***********************************************************************************************/
+int spi_send_packet(int spi_fd, int gpio_fd, u8 *data, u16 len)
+{
+    int result = RESULT_OK;
+
+    do {
+        if (!data || len == 0 || len > PKT_LEN) {
+            log_msg(LOG_ERR, "Invalid SPI packet length %u", len);
+            result = RESULT_ARGUMENT_ERROR;
+            break;
+        }
+
+        spi_ip_hdr_t hdr = {
+            .magic = SPI_MAGIC,
+            .version = 0x01,
+            .flags = 0,
+            .length = len
+        };
+
+        u32 crc = crc32(0, data, len);
+        u8 buf[PKT_LEN] = {0};
+        size_t offset = 0;
+        memcpy(buf + offset, &hdr, sizeof(hdr)); offset += sizeof(hdr);
+        memcpy(buf + offset, data, len); offset += len;
+        memcpy(buf + offset, &crc, sizeof(crc));
+
+        result = spi_send_transfer(spi_fd, gpio_fd, buf, sizeof(buf));
+
+    } while(0);
+
+    return result;
 }
 /***********************************************************************************************/
