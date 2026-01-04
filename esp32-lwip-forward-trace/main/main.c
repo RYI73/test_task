@@ -13,6 +13,7 @@
 
 #include <string.h>
 #include <assert.h>
+#include <stdint.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -25,15 +26,11 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
-#include "esp_crc.h"
 
 #include "lwip/netif.h"
 #include "lwip/ip4.h"
 #include "lwip/pbuf.h"
-#include "lwip/tcp.h"
-#include "lwip/tcpip.h"
 #include "lwip/err.h"
-#include "lwip/prot/tcp.h"
 
 #include "logs.h"
 #include "defaults.h"
@@ -41,10 +38,10 @@
 #include "spi_helpers.h"
 #include "network_helpers.h"
 #include "gpio_helpers.h"
+#include "types.h"
 
-/* ===================== GLOBALS ===================== */
-static EventGroupHandle_t wifi_event_group;
-
+/***********************************************************************************************/
+static EventGroupHandle_t wifi_event_group = NULL;
 static QueueHandle_t spi_tx_queue;
 static struct netif vnetif;
 
@@ -59,125 +56,58 @@ typedef struct {
 } queue_pkt_t;
 
 /***********************************************************************************************/
-/**
- * @brief Initialize SPI handshake GPIO and enable pull-ups on SPI lines
- */
-//static void gpio_ready_init(void)
-//{
-//    gpio_config_t io = {
-//        .pin_bit_mask = BIT64(GPIO_SPI_READY),
-//        .mode = GPIO_MODE_OUTPUT,
-//        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-//        .pull_up_en = GPIO_PULLUP_DISABLE,
-//        .intr_type = GPIO_INTR_DISABLE,
-//    };
-
-//    gpio_config(&io);
-//    gpio_set_level(GPIO_SPI_READY, 0);
-
-//    /* Enable pull-ups on SPI lines to prevent spurious pulses */
-//    gpio_set_pull_mode(GPIO_MOSI, GPIO_PULLUP_ONLY);
-//    gpio_set_pull_mode(GPIO_SCLK, GPIO_PULLUP_ONLY);
-//    gpio_set_pull_mode(GPIO_CS, GPIO_PULLUP_ONLY);
-//}
+/* Internal functions                                                                          */
 /***********************************************************************************************/
 /**
- * @brief Forward an IPv4 packet from SPI to lwIP stack
- * @param buf Pointer to packet
- * @param len Packet length
+ * @brief Initialize the Non-Volatile Storage (NVS) flash
+ *
+ * This function initializes the ESP32 NVS partition used for WiFi and system settings.
+ * If the NVS partition has no free pages or a new version is found, it erases
+ * the flash and reinitializes it.
+ *
+ * @return RESULT_OK on successful initialization,
+ *         RESULT_INTERNAL_ERROR on failure (including erase failure).
+ *
+ * @note Logs warnings if NVS needs erasing, and logs errors on failure.
  */
-static void spi_ipv4_forward(const uint8_t *buf, size_t len)
+static int nvs_init(void)
 {
-    if (len < sizeof(struct ip_hdr)) return;
+    int result = RESULT_OK;
+    esp_err_t ret = nvs_flash_init();
 
-    struct ip_hdr *iph = (struct ip_hdr *)buf;
-    if (IPH_V(iph) != 4) {
-        log_msg(LOG_WARNING, "Not IPv4");
-        return;
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        log_msg(LOG_WARNING, "NVS flash init: no free pages or new version, erasing...");
+        ret = nvs_flash_erase();
+        if (ret != ESP_OK) {
+            log_msg(LOG_ERR, "Failed to erase NVS flash: %d", ret);
+            result = RESULT_INTERNAL_ERROR;
+            return result;
+        }
+
+        ret = nvs_flash_init();
     }
 
-    uint16_t ip_hlen = IPH_HL_BYTES(iph);
-    if (ip_hlen < sizeof(struct ip_hdr) || ip_hlen > len) {
-        log_msg(LOG_WARNING, "Bad IP header length");
-        return;
+    if (ret != ESP_OK) {
+        log_msg(LOG_ERR, "NVS flash init failed: %d", ret);
+        result = RESULT_INTERNAL_ERROR;
+    } else {
+        log_msg(LOG_INFO, "NVS flash initialized successfully");
     }
 
-    uint16_t l4_len = len - ip_hlen;
-    uint8_t *l4 = (uint8_t *)buf + ip_hlen;
-
-    struct pbuf *q = pbuf_alloc(PBUF_TRANSPORT, l4_len, PBUF_RAM);
-    if (!q) {
-        log_msg(LOG_WARNING, "pbuf_alloc failed");
-        return;
-    }
-
-    memcpy(q->payload, l4, l4_len);
-
-    ip4_addr_t src, dst;
-    ip4_addr_copy(src, iph->src);
-    ip4_addr_copy(dst, iph->dest);
-
-    err_t err = ip4_output_if(q, &src, &dst, IPH_TTL(iph), IPH_TOS(iph), IPH_PROTO(iph), netif_default);
-    if (err != ERR_OK) {
-        log_msg(LOG_WARNING, "ip4_output_if failed: %d", err);
-    }
-
-    pbuf_free(q);
+    return result;
 }
 /***********************************************************************************************/
 /**
- * @brief Log IPv4 and TCP packet details for debugging.
+ * @brief Virtual network interface output function
  *
- * This function inspects the provided pbuf and prints information about
- * the IPv4 header (source, destination, protocol) and TCP header (flags,
- * ports, sequence and acknowledgment numbers) if the packet is TCP.
+ * This function is called by lwIP when sending a packet through the virtual network interface.
+ * It logs IPv4/TCP details and enqueues the packet to be sent over SPI.
  *
- * @param p Pointer to the pbuf containing the packet. The pbuf must
- *          contain at least the IPv4 header.
+ * @param netif  Pointer to the lwIP network interface (unused)
+ * @param p      Pointer to the pbuf containing the packet
+ * @param ipaddr Pointer to the destination IP address (unused)
  *
- * @note Only IPv4 packets are processed. Non-IPv4 packets are ignored.
- * @note TCP fields are logged only if the packet's protocol is TCP and
- *       the pbuf length is sufficient to contain a TCP header.
- */
-void log_l3_tcp(struct pbuf *p)
-{
-    if (p->len < sizeof(struct ip_hdr)) return;
-
-    struct ip_hdr *iph = (struct ip_hdr *)p->payload;
-    if (IPH_V(iph) != 4) return;
-
-    uint32_t src = ip4_addr_get_u32(&iph->src);
-    uint32_t dst = ip4_addr_get_u32(&iph->dest);
-
-    log_msg(LOG_INFO, "IP proto=%d %d.%d.%d.%d -> %d.%d.%d.%d len=%d",
-        IPH_PROTO(iph),
-        src & 0xff, (src>>8)&0xff, (src>>16)&0xff, (src>>24)&0xff,
-        dst & 0xff, (dst>>8)&0xff, (dst>>16)&0xff, (dst>>24)&0xff,
-        p->tot_len
-    );
-
-    if (IPH_PROTO(iph) == IP_PROTO_TCP) {
-        uint16_t ip_hlen = IPH_HL_BYTES(iph);
-        if (p->len < ip_hlen + sizeof(struct tcp_hdr)) return;
-
-        struct tcp_hdr *tcph = (struct tcp_hdr *)((uint8_t *)iph + ip_hlen);
-        uint8_t f = TCPH_FLAGS(tcph);
-
-        log_msg(LOG_INFO, " TCP %s%s%s%s %u -> %u seq=%u ack=%u",
-            (f & TCP_SYN) ? "SYN " : "",
-            (f & TCP_ACK) ? "ACK " : "",
-            (f & TCP_FIN) ? "FIN " : "",
-            (f & TCP_RST) ? "RST " : "",
-            lwip_ntohs(tcph->src),
-            lwip_ntohs(tcph->dest),
-            lwip_ntohl(tcph->seqno),
-            lwip_ntohl(tcph->ackno)
-        );
-    }
-}
-/***********************************************************************************************/
-/**
- * @brief Output function for virtual netif
+ * @return ERR_OK always
  */
 static err_t virtual_netif_output(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipaddr)
 {
@@ -197,96 +127,30 @@ static err_t virtual_netif_output(struct netif *netif, struct pbuf *p, const ip4
 }
 /***********************************************************************************************/
 /**
- * @brief Initialize virtual netif structure
- */
-static err_t virtual_netif_netif_init(struct netif *netif)
-{
-    netif->name[0] = 'v';
-    netif->name[1] = 'n';
-    netif->mtu = 1500;
-    netif->flags = NETIF_FLAG_UP | NETIF_FLAG_LINK_UP | NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP;
-    netif->output = virtual_netif_output;
-    netif->linkoutput = NULL;
-    return ERR_OK;
-}
-/***********************************************************************************************/
-/**
- * @brief Add and configure virtual netif in lwIP
- */
-static void virtual_netif_init(void)
-{
-    ip4_addr_t ip, netmask, gw;
-    IP4_ADDR(&ip,      10,0,0,1);
-    IP4_ADDR(&netmask, 255,255,255,0);
-    IP4_ADDR(&gw,      0,0,0,0);
-
-    netif_add(&vnetif, &ip, &netmask, &gw, NULL, virtual_netif_netif_init, tcpip_input);
-    vnetif.flags |= NETIF_FLAG_UP | NETIF_FLAG_LINK_UP;
-    log_msg(LOG_INFO, "Virtual netif UP: 10.0.0.1/24");
-}
-/***********************************************************************************************/
-/**
- * @brief Event handler for WiFi events
- */
-static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
-{
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        log_msg(LOG_INFO, "WiFi started, connecting...");
-        esp_wifi_connect();
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        log_msg(LOG_WARNING, "WiFi disconnected, retry...");
-        esp_wifi_connect();
-    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-        log_msg(LOG_INFO, "WiFi GOT IP: " IPSTR, IP2STR(&event->ip_info.ip));
-        xEventGroupSetBits(wifi_event_group, WIFI_GOT_IP_BIT);
-    }
-}
-/***********************************************************************************************/
-/**
- * @brief Initialize WiFi STA
- */
-static void wifi_init(void)
-{
-    wifi_event_group = xEventGroupCreate();
-    esp_netif_create_default_wifi_sta();
-
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL));
-
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-
-    wifi_config_t sta_cfg = {
-        .sta = {
-            .ssid = WIFI_SSID,
-            .password = WIFI_PASS,
-        }
-    };
-
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg));
-    ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
-}
-/***********************************************************************************************/
-/**
- * @brief Task to receive SPI packets and forward to lwIP
+ * @brief SPI RX task
+ *
+ * This FreeRTOS task waits for SPI packets from the master, forwards IPv4 packets to lwIP,
+ * and sends outgoing packets from the SPI TX queue back to the master.
+ *
+ * @param arg Pointer to the SPI file descriptor (int *)
+ *
+ * @note Runs indefinitely in a while(1) loop.
+ * @note The SPI receive function is expected to return with packet length via the `length` pointer.
  */
 static void spi_rx_task(void *arg)
 {
     int *spi_fd_ptr = (int *)arg;
     int spi_fd = *spi_fd_ptr;
 
-    uint8_t buf[PKT_LEN*2];
-    uint16_t length = 0;
+    static u8 buf[PKT_LEN*2] __attribute__((aligned(4)));
+    u16 length = 0;
     queue_pkt_t tx_pkt = {0};
 
     while (1) {
         /* Wait for SPI transaction done event via semaphore */
         if (isOk(spi_receive(spi_fd, 0, buf, &length))) {
             log_msg(LOG_INFO, "Received valid SPI packet (%d bytes)", length);
-            spi_ipv4_forward(buf, length);
+            ipv4_forward(buf, length);
         }
 
         if (xQueueReceive(spi_tx_queue, &tx_pkt, 0)) {
@@ -295,31 +159,28 @@ static void spi_rx_task(void *arg)
     }
 }
 /***********************************************************************************************/
-/**
- * @brief Application entry point
- */
+/* Main application function                                                                   */
+/***********************************************************************************************/
 void app_main(void)
 {
     int spi_fd = -1;
+    BaseType_t task_ret = 0;
     int result = RESULT_OK;
 
     do {
-        esp_err_t ret = nvs_flash_init();
-        if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-            ESP_ERROR_CHECK(nvs_flash_erase());
-            ret = nvs_flash_init();
+        result = nvs_init();
+        if (!isOk(result)) {
+            log_msg(LOG_ERR, "NVS Flash initialization error: %u", result);
+            break;
         }
-        ESP_ERROR_CHECK(ret);
+        log_msg(LOG_INFO, "NVS Flash initialized successfully");
 
         result = gpio_init(NULL, 0, NULL);
         if (!isOk(result)) {
             log_msg(LOG_ERR, "GPIO initialization error: %u", result);
             break;
         }
-        log_msg(LOG_INFO, "GPIO initialized for SPI handshake");
-
-        ESP_ERROR_CHECK(esp_netif_init());
-        ESP_ERROR_CHECK(esp_event_loop_create_default());
+        log_msg(LOG_INFO, "GPIO initialized successfully");
 
         spi_tx_queue = xQueueCreate(SPI_TX_QUEUE_LEN, sizeof(queue_pkt_t));
         if (spi_tx_queue == NULL) {
@@ -333,8 +194,14 @@ void app_main(void)
             log_msg(LOG_ERR, "Spi initialization error: %u", result);
             break;
         }
+        log_msg(LOG_INFO, "SPI initialized successfully");
 
-        wifi_init();
+        result = wifi_init(&wifi_event_group);
+        if (!isOk(result)) {
+            log_msg(LOG_ERR, "WiFi initialization error: %u", result);
+            break;
+        }
+        log_msg(LOG_INFO, "WiFi initialized successfully");
 
         log_msg(LOG_INFO, "Waiting for IP...");
         EventBits_t bits = xEventGroupWaitBits(
@@ -351,8 +218,11 @@ void app_main(void)
             break;
         }
 
-        virtual_netif_init();
-
+        result = virtual_netif_init(&vnetif, virtual_netif_output);
+        if (!isOk(result)) {
+            log_msg(LOG_ERR, "Virtual netif initialization error: %u", result);
+            break;
+        }
         log_msg(LOG_INFO, "lwIP router + virtual sink ready");
 
         if (netif_default) {
@@ -361,8 +231,27 @@ void app_main(void)
                      netif_default->name[0], netif_default->name[1], netif_default->num,
                      ip ? ip4addr_ntoa(ip) : "none");
         }
+        else {
+            log_msg(LOG_ERR, "Default network interface not available, cannot start networking");
+            result = RESULT_INTERNAL_ERROR;
+            break;
+        }
 
-        xTaskCreate(spi_rx_task, "spi_rx_task", 4096, &spi_fd, 3, NULL);
+        task_ret = xTaskCreate(
+            spi_rx_task,                   /* Task function */
+            "spi_rx_task",                 /* Task name */
+            SPI_RX_TASK_STACK_SIZE,        /* Stack size */
+            (void *)&spi_fd,               /* Task argument: pointer to SPI FD */
+            SPI_RX_TASK_PRIORITY,          /* Task priority */
+            NULL                           /* Task handle not used */
+        );
+
+        if (task_ret != pdPASS) {
+            log_msg(LOG_ERR, "Failed to create spi_rx_task");
+            result = RESULT_INTERNAL_ERROR;
+            break;
+        }
+
     } while(0);
 
     if (!isOk(result)) {
