@@ -34,6 +34,7 @@
 /***********************************************************************************************/
 static struct cli cli;
 static u16 sequence = 0x10;
+static u64 last_throughput_kbps;
 /***********************************************************************************************/
 commands_t commands[] = {
     {"send_str",        cmd_send_string,            "Send string to server."},
@@ -95,6 +96,18 @@ static int eprintf(const char *str, ...)
     return 0;
 }
 /***********************************************************************************************/
+static void stats_compute(u32 len, u64 start_ns, u64 end_ns, u64 *throughput)
+{
+    u32 elapsed_s = (u32)((end_ns - start_ns) / 1000000ULL);
+    if (elapsed_s == 0) {
+        elapsed_s = 1;
+    }
+
+    *throughput = (len * 8ULL * 1000ULL) / elapsed_s / 1000ULL;
+    print_string("throughput: %llu kbps\n", *throughput);
+
+}
+/***********************************************************************************************/
 /**
  * @brief Perform a single request/reply transaction with the server.
  *
@@ -152,20 +165,23 @@ static int cmd_transaction(packet_t *request, packet_t *replay)
             else if (replay->packet.header.type == PACKET_TYPE_ANSWER_STATS) {
                 server_stats_t *g_stats = (server_stats_t *)replay->packet.data;
 
-                const char total_bytes[] = "Total bytes"DOTS;
-                const char broken_bytes[] = "Broken bytes"DOTS;
-                const char avg_latency_bytes[] = "Average latency"DOTS;
-                const char min_latency_bytes[] = "Min latency"DOTS;
-                const char max_latency_bytes[] = "Max latency"DOTS;
+                const char total_packets[] = "Total bytes"DOTS;
+                const char broken_packets[] = "Broken bytes"DOTS;
+                const char avg_latency[] = "Average latency"DOTS;
+                const char min_latency[] = "Min latency"DOTS;
+                const char max_latency[] = "Max latency"DOTS;
                 const char throughput[] = "Throughput"DOTS;
 
+                print_string("%-.*s\n", 11, EQUALS);
                 print_string("Statistics:\n");
-                print_string("%-.*s%u bytes\n", STATUS_NAME_SIZE, total_bytes, g_stats->requests.total_requests);
-                print_string("%-.*s%u bytes\n", STATUS_NAME_SIZE, broken_bytes, g_stats->requests.broken_requests);
-                print_string("%-.*s%u ms\n", STATUS_NAME_SIZE, avg_latency_bytes, g_stats->latency.avg_latency);
-                print_string("%-.*s%u ms\n", STATUS_NAME_SIZE, min_latency_bytes, g_stats->latency.min_latency_ms);
-                print_string("%-.*s%u ms\n", STATUS_NAME_SIZE, max_latency_bytes, g_stats->latency.max_latency_ms);
-                print_string("%-.*s%u kbps\n", STATUS_NAME_SIZE, throughput, g_stats->throughput);
+                print_string("%-.*s\n", 11, DASHES);
+                print_string("%-.*s%u packets\n", STATUS_NAME_SIZE, total_packets, g_stats->requests.total_requests);
+                print_string("%-.*s%u packets\n", STATUS_NAME_SIZE, broken_packets, g_stats->requests.broken_requests);
+                print_string("%-.*s%u ms\n", STATUS_NAME_SIZE, avg_latency, g_stats->latency.avg_latency);
+                print_string("%-.*s%u ms\n", STATUS_NAME_SIZE, min_latency, g_stats->latency.min_latency_ms);
+                print_string("%-.*s%u ms\n", STATUS_NAME_SIZE, max_latency, g_stats->latency.max_latency_ms);
+                print_string("%-.*s%u kbps\n", STATUS_NAME_SIZE, throughput, last_throughput_kbps);
+                print_string("%-.*s\n", 64, EQUALS);
 
             }
             else {
@@ -250,11 +266,15 @@ void cmd_send_string(int cli_argc, const char **cli_argv)
     size_t len = 0;
     packet_t request = {0};
     packet_t replay = {0};
+    s64 repeat_amount = 1;
+    int cntr_err = 0;
+    int cntr_x = 0;
     int result = RESULT_OK;
 
     struct option_entry entries[] = {
         {"string", 's', "Enter string for sending", OPTION_FLAG_string, .string = &message},
         {"wrong", 'w', "Send wrong string for testing (Enable: 1, true, t, on, yes)", OPTION_FLAG_bool, .boolean = &wrong_string_mode},
+        {"repeat", 'r', "Specify amount of packet send repeat", OPTION_FLAG_int, .integer = &repeat_amount},
         {NULL, 0, NULL, 0, .boolean=false},
     };
     int extra_args = opt_parse(cli_argc, cli_argv, entries);
@@ -269,16 +289,26 @@ void cmd_send_string(int cli_argc, const char **cli_argv)
 
             len = PACKET_DATA_SIZE < strlen(message) ? PACKET_DATA_SIZE : strlen(message);
 
-            /* Prepare packet to server */
-            memcpy(request.packet.data, message, len);
-            request.packet.header.type = PACKET_TYPE_STRING;
-            protocol_packet_prepare(&request, sequence++, len);
+            u64 start_ns = now_ns();
+            for (cntr_x = 0; cntr_x < repeat_amount; cntr_x++) {
+                /* Prepare packet to server */
+                memcpy(request.packet.data, message, len);
+                request.packet.header.type = PACKET_TYPE_STRING;
+                protocol_packet_prepare(&request, sequence++, len);
 
-            result = cmd_transaction(&request, &replay);
+                result = cmd_transaction(&request, &replay);
+                if (!isOk(result)) {
+                    if (cntr_err++ > 10) {
+                        break;
+                    }
+                }
+            }
+            u64 end_ns = now_ns();
+            stats_compute(len * cntr_x, start_ns, end_ns, &last_throughput_kbps);
+
             if (!isOk(result)) {
                 break;
             }
-
         } while(0);
     }
 }
@@ -292,13 +322,17 @@ void cmd_send_binary(int cli_argc, const char **cli_argv)
     uint8_t array[64] = {0};
     bool wrong_bin_mode = false;
     size_t len = 0;
+    s64 repeat_amount = 1;
     packet_t request = {0};
     packet_t replay = {0};
+    int cntr_err = 0;
+    int cntr_x = 0;
     int result = RESULT_OK;
 
     struct option_entry entries[] = {
         {"binary", 'b', "Enter binary in format: \"1A 23 FD 08 17 3C\"", OPTION_FLAG_string, .string = &binary_str},
         {"wrong", 'w', "Send wrong string for testing (Enable: 1, true, t, on, yes)", OPTION_FLAG_bool, .boolean = &wrong_bin_mode},
+        {"repeat", 'r', "Specify amount of packet send repeat", OPTION_FLAG_int, .integer = &repeat_amount},
         {NULL, 0, NULL, 0, .boolean=false},
     };
     int extra_args = opt_parse(cli_argc, cli_argv, entries);
@@ -316,12 +350,23 @@ void cmd_send_binary(int cli_argc, const char **cli_argv)
                 len = sizeof(array_wrong_bin);
             }
 
-            /* Prepare packet to server */
-            memcpy(request.packet.data, array_bin, len);
-            request.packet.header.type = PACKET_TYPE_ARRAY;
-            protocol_packet_prepare(&request, sequence++, len);
+            u64 start_ns = now_ns();
+            for (cntr_x = 0; cntr_x < repeat_amount; cntr_x++) {
+                /* Prepare packet to server */
+                memcpy(request.packet.data, array_bin, len);
+                request.packet.header.type = PACKET_TYPE_ARRAY;
+                protocol_packet_prepare(&request, sequence++, len);
 
-            result = cmd_transaction(&request, &replay);
+                result = cmd_transaction(&request, &replay);
+                if (!isOk(result)) {
+                    if (cntr_err++ > 10) {
+                        break;
+                    }
+                }
+            }
+            u64 end_ns = now_ns();
+            stats_compute(len * cntr_x, start_ns, end_ns, &last_throughput_kbps);
+
             if (!isOk(result)) {
                 break;
             }

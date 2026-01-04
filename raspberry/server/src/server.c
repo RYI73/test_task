@@ -131,7 +131,9 @@ static void stats_compute(u32 *avg_latency_ms, u64 *throughput_kbps)
 {
     u64 now = now_ns();
     u32 elapsed_s = (u32)((now - g_stats.runtime.start_time_ns) / 1000000000ULL);
-    if (elapsed_s == 0) elapsed_s = 1;
+    if (elapsed_s == 0) {
+        elapsed_s = 1;
+    }
 
     *avg_latency_ms = g_stats.requests.total_requests ?
                       (u32)((g_stats.latency.total_latency_ns / 1000000ULL) / g_stats.requests.total_requests)
@@ -201,14 +203,6 @@ static void handle_client(int client_fd)
                     memcpy(reply.packet.data, &g_stats, len_out);
                     type = PACKET_TYPE_ANSWER_STATS;
 
-                    log_msg(LOG_INFO,
-                            "Requests: total=%u broken=%u, avg latency=%u ms, min=%u ms, max=%u ms, throughput=%llu kbps",
-                            g_stats.requests.total_requests,
-                            g_stats.requests.broken_requests,
-                            g_stats.latency.avg_latency,
-                            g_stats.latency.min_latency_ms,
-                            g_stats.latency.max_latency_ms,
-                            g_stats.throughput);
                     break;
                 }
 

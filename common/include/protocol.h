@@ -60,13 +60,13 @@ typedef struct {
 } pack_t;
 /***********************************************************************************************/
 typedef union {
-    u8 buffer[PACKET_SIZE];
+    u8 buffer[PKT_LEN];
     pack_t packet;
 } packet_t;
 /***********************************************************************************************/
 #define PACKET_HEADER_CRC_OFFSET    (offsetof(packet_t, packet.header.sequence))
 #define PACKET_HEADER_SIZE          (sizeof(((packet_t*)0)->packet.header))
-#define PACKET_DATA_SIZE            (PACKET_SIZE - PACKET_HEADER_SIZE)
+#define PACKET_DATA_SIZE            (PKT_LEN - PACKET_HEADER_SIZE)
 #define PACKET_HEADER_CRC_SIZE      (PACKET_HEADER_SIZE - PACKET_HEADER_CRC_OFFSET)
 /***********************************************************************************************/
 /**
