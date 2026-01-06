@@ -122,7 +122,6 @@ int ipv4_forward(const u8 *buf, size_t len)
         }
 
         u16 l4_len = len - ip_hlen;
-        u8 *l4 = (u8 *)buf + ip_hlen;
 
         struct pbuf *q = pbuf_alloc(PBUF_TRANSPORT, l4_len, PBUF_RAM);
         if (!q) {
@@ -131,6 +130,7 @@ int ipv4_forward(const u8 *buf, size_t len)
             break;
         }
 
+        u8 *l4 = (u8 *)buf + ip_hlen;
         memcpy(q->payload, l4, l4_len);
 
         ip4_addr_t src, dst;
@@ -150,41 +150,53 @@ int ipv4_forward(const u8 *buf, size_t len)
     return result;
 }
 /***********************************************************************************************/
-void log_l3_tcp(struct pbuf *p)
+void log_l3_tcp(const u8 *buf, size_t len)
 {
-    if (!p || p->len < sizeof(struct ip_hdr)) return;
+    do {
+        if (!buf || len < sizeof(struct ip_hdr)) {
+            break;
+        }
 
-    struct ip_hdr *iph = (struct ip_hdr *)p->payload;
-    if (IPH_V(iph) != 4) return;
+        struct ip_hdr *iph = (struct ip_hdr *)buf;
+        if (IPH_V(iph) != 4) {
+            break;
+        }
 
-    u32 src = ip4_addr_get_u32(&iph->src);
-    u32 dst = ip4_addr_get_u32(&iph->dest);
-
-    log_msg(LOG_INFO, "IP proto=%d %d.%d.%d.%d -> %d.%d.%d.%d len=%d",
-        IPH_PROTO(iph),
-        src & 0xff, (src>>8)&0xff, (src>>16)&0xff, (src>>24)&0xff,
-        dst & 0xff, (dst>>8)&0xff, (dst>>16)&0xff, (dst>>24)&0xff,
-        p->tot_len
-    );
-
-    if (IPH_PROTO(iph) == IP_PROTO_TCP) {
         u16 ip_hlen = IPH_HL_BYTES(iph);
-        if (p->len < ip_hlen + sizeof(struct tcp_hdr)) return;
+        if (ip_hlen < sizeof(struct ip_hdr) || ip_hlen > len) {
+            break;
+        }
 
-        struct tcp_hdr *tcph = (struct tcp_hdr *)((u8 *)iph + ip_hlen);
-        u8 f = TCPH_FLAGS(tcph);
+        u32 src = ip4_addr_get_u32(&iph->src);
+        u32 dst = ip4_addr_get_u32(&iph->dest);
 
-        log_msg(LOG_INFO, " TCP %s%s%s%s %u -> %u seq=%u ack=%u",
-            (f & TCP_SYN) ? "SYN " : "",
-            (f & TCP_ACK) ? "ACK " : "",
-            (f & TCP_FIN) ? "FIN " : "",
-            (f & TCP_RST) ? "RST " : "",
-            lwip_ntohs(tcph->src),
-            lwip_ntohs(tcph->dest),
-            lwip_ntohl(tcph->seqno),
-            lwip_ntohl(tcph->ackno)
+        log_msg(LOG_INFO, "IP proto=%d %d.%d.%d.%d -> %d.%d.%d.%d len=%d",
+            IPH_PROTO(iph),
+            src & 0xff, (src>>8)&0xff, (src>>16)&0xff, (src>>24)&0xff,
+            dst & 0xff, (dst>>8)&0xff, (dst>>16)&0xff, (dst>>24)&0xff,
+            len
         );
-    }
+
+        if (IPH_PROTO(iph) == IP_PROTO_TCP) {
+            u16 ip_hlen = IPH_HL_BYTES(iph);
+            if (len < ip_hlen + sizeof(struct tcp_hdr)) return;
+
+            struct tcp_hdr *tcph = (struct tcp_hdr *)((u8 *)iph + ip_hlen);
+            u8 f = TCPH_FLAGS(tcph);
+
+            log_msg(LOG_INFO, " TCP %s%s%s%s %u -> %u seq=%u ack=%u",
+                (f & TCP_SYN) ? "SYN " : "",
+                (f & TCP_ACK) ? "ACK " : "",
+                (f & TCP_FIN) ? "FIN " : "",
+                (f & TCP_RST) ? "RST " : "",
+                lwip_ntohs(tcph->src),
+                lwip_ntohs(tcph->dest),
+                lwip_ntohl(tcph->seqno),
+                lwip_ntohl(tcph->ackno)
+            );
+        }
+    } while (0);
+
 }
 /***********************************************************************************************/
 int wifi_init(void *ptr_event_group)

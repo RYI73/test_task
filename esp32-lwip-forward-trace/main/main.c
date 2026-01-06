@@ -114,13 +114,12 @@ static err_t virtual_netif_output(struct netif *netif, struct pbuf *p, const ip4
     (void)netif;
     (void)ipaddr;
 
-    log_l3_tcp(p);
-
     if (p->tot_len < PKT_LEN) {
         queue_pkt_t pkt = {0};
         pkt.len = p->tot_len;
         pbuf_copy_partial(p, pkt.data, pkt.len, 0);
 
+        log_l3_tcp(pkt.data, pkt.len);
         xQueueSend(spi_tx_queue, &pkt, 0);
     }
     return ERR_OK;
@@ -149,7 +148,7 @@ static void spi_rx_task(void *arg)
     while (1) {
         /* Wait for SPI transaction done event via semaphore */
         if (isOk(spi_receive(spi_fd, 0, buf, &length))) {
-            log_msg(LOG_INFO, "Received valid SPI packet (%d bytes)", length);
+            log_l3_tcp(buf, length);
             ipv4_forward(buf, length);
         }
 

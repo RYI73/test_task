@@ -39,7 +39,7 @@
     0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF    \
 }
 /** Maximum size of packet */
-#define PKT_LEN                                 (256)
+#define PKT_LEN                                 (2*1024)
 /** Maximum number of concurrent clients */
 #define MAX_CLIENTS                             (5)
 /** poll() timeout in milliseconds */
@@ -65,7 +65,7 @@
 #define SPI_DEVICE                              "/dev/spidev0.0"
 #define SPI_MODE                                (0)
 #define SPI_BITS                                (8)
-#define SPI_SPEED                               (1000000)         /**< SPI speed in Hz */
+#define SPI_SPEED                               (1000000*10)         /**< SPI speed in Hz */
 #define MAX_PKT_SIZE                            (1500)            /**< Maximum packet size for SPI transfer */
 
 /** TUN device settings */

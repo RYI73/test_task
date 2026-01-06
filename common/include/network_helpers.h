@@ -21,14 +21,14 @@ int ipv4_forward(const u8 *buf, size_t len);
  * the IPv4 header (source, destination, protocol) and TCP header (flags,
  * ports, sequence and acknowledgment numbers) if the packet is TCP.
  *
- * @param p Pointer to the pbuf containing the packet. The pbuf must
- *          contain at least the IPv4 header.
+ * @param buf   Pointer to IP packet
+ * @param len   Length of buffer in bytes
  *
  * @note Only IPv4 packets are processed. Non-IPv4 packets are ignored.
  * @note TCP fields are logged only if the packet's protocol is TCP and
  *       the pbuf length is sufficient to contain a TCP header.
  */
-void log_l3_tcp(struct pbuf *p);
+void log_l3_tcp(const u8 *buf, size_t len);
 
 /**
  * @brief Initialize WiFi subsystem in STA mode.

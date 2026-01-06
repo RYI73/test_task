@@ -1,0 +1,44 @@
+pi@raspberrypi:/tmp $ iperf3 -s
+-----------------------------------------------------------
+Server listening on 5201 (test #4)
+-----------------------------------------------------------
+Accepted connection from 192.168.1.118, port 52206
+[  5] local 10.0.0.2 port 5201 connected to 192.168.1.118 port 52214
+[ ID] Interval           Transfer     Bitrate
+[  5]   0.00-1.00   sec  56.6 KBytes   463 Kbits/sec                  
+[  5]   1.00-2.00   sec  52.3 KBytes   429 Kbits/sec                  
+[  5]   2.00-3.00   sec   105 KBytes   857 Kbits/sec                  
+[  5]   3.00-4.00   sec  48.1 KBytes   394 Kbits/sec                  
+[  5]   4.00-5.00   sec  91.9 KBytes   753 Kbits/sec                  
+[  5]   5.00-6.00   sec  87.7 KBytes   718 Kbits/sec                  
+[  5]   6.00-7.00   sec  89.1 KBytes   730 Kbits/sec                  
+[  5]   7.00-8.00   sec  76.4 KBytes   626 Kbits/sec                  
+[  5]   8.00-9.00   sec  70.7 KBytes   579 Kbits/sec                  
+[  5]   9.00-10.00  sec  80.6 KBytes   660 Kbits/sec                  
+[  5]  10.00-10.09  sec  7.07 KBytes   626 Kbits/sec                  
+- - - - - - - - - - - - - - - - - - - - - - - - -
+[ ID] Interval           Transfer     Bitrate
+[  5]   0.00-10.09  sec   765 KBytes   621 Kbits/sec                  receiver
+-----------------------------------------------------------
+
+user@userhp:~/work/AJAX/test_task$ iperf3 -c 10.0.0.2
+Connecting to host 10.0.0.2, port 5201
+[  5] local 192.168.1.118 port 52214 connected to 10.0.0.2 port 5201
+[ ID] Interval           Transfer     Bitrate         Retr  Cwnd
+[  5]   0.00-1.00   sec   128 KBytes  1.05 Mbits/sec   20   24.0 KBytes       
+[  5]   1.00-2.00   sec  0.00 Bytes  0.00 bits/sec   18   11.3 KBytes       
+[  5]   2.00-3.00   sec   128 KBytes  1.05 Mbits/sec    0   17.0 KBytes       
+[  5]   3.00-4.00   sec   128 KBytes  1.05 Mbits/sec    1   18.4 KBytes       
+[  5]   4.00-5.00   sec  0.00 Bytes  0.00 bits/sec   14   9.90 KBytes       
+[  5]   5.00-6.00   sec   128 KBytes  1.05 Mbits/sec    5   9.90 KBytes       
+[  5]   6.00-7.00   sec   128 KBytes  1.05 Mbits/sec    7   4.24 KBytes       
+[  5]   7.00-8.00   sec  0.00 Bytes  0.00 bits/sec    2   7.07 KBytes       
+[  5]   8.00-9.00   sec   128 KBytes  1.05 Mbits/sec    6   2.83 KBytes       
+[  5]   9.00-10.00  sec  0.00 Bytes  0.00 bits/sec    1   9.90 KBytes       
+- - - - - - - - - - - - - - - - - - - - - - - - -
+[ ID] Interval           Transfer     Bitrate         Retr
+[  5]   0.00-10.00  sec   768 KBytes   629 Kbits/sec   74             sender
+[  5]   0.00-10.09  sec   765 KBytes   621 Kbits/sec                  receiver
+
+iperf Done.
+
