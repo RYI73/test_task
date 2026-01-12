@@ -150,13 +150,6 @@ int gpio_init(const char *device, int offset, int *gpio_fd)
     int gpio = -1;
 
     do {
-        fd = open(device, O_RDONLY);
-        if (fd < 0) {
-            log_msg(LOG_ERR, "Unable to open device '%s': %s", device, strerror(errno));
-            result = RESULT_FILE_OPEN_ERROR;
-            break;
-        }
-
         // Export GPIO
         result = read_gpiochip_base(&base);
         if (!isOk(result)) {
@@ -170,6 +163,17 @@ int gpio_init(const char *device, int offset, int *gpio_fd)
         log_msg(LOG_INFO, "Exporting GPIO %d (offset %d)\n", gpio, offset);
 
         result = export_gpio(gpio);
+        if (!isOk(result)) {
+            log_msg(LOG_ERR, "Failed to export gpio");
+            break;
+        }
+
+        fd = open(device, O_RDONLY);
+        if (fd < 0) {
+            log_msg(LOG_ERR, "Unable to open device '%s': %s", device, strerror(errno));
+            result = RESULT_FILE_OPEN_ERROR;
+            break;
+        }
 
     } while(0);
 
